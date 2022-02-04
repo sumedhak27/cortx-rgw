@@ -349,11 +349,51 @@ class MotrBucket : public Bucket {
     friend class MotrStore;
 };
 
-class MotrZone : public Zone {
+class MGWZoneGroup {
+  // TODO: Add members & functions related to zones, realm,.. ,etc.
+  protected:
+    std::string id
+    std::string api_name;
+    bool is_master = false;
+
+  public:
+    MGWZoneGroup(): is_master(false){}
+    MGWZonwGroup(const std::string &_id, const std::string &_name, bool _is_master=false)
+      : id(_id), api_name(_name), is_master(_is_master) {}
+
+    std::string get_id() const { return id;}
+    std::string get_api_name() const { return api_name;}
+    bool is_master_zonegroup() const { return is_master;}
+    void update_master(const DoutPrefixProvider *dpp, bool _is_master, optional_yield y) {
+      is_master = _is_master;
+      // In multi-site config post param processing is needed.
+    }
+
+    void encode(bufferlist& bl) const override {
+      ENCODE_START(5, 1, bl);
+      encode(name, bl);
+      encode(id, bl);
+      encode(api_name, bl);
+      encode(is_master, bl);
+      ENCODE_FINISH(bl);
+    }
+
+    void decode(bufferlist::const_iterator& bl) override {
+      DECODE_START(5, bl);
+      decode(name, bl);
+      decode(id, bl);
+      decode(api_name, bl);
+      decode(is_master, bl);
+      DECODE_FINISH(bl);
+    }
+};
+WRITE_CLASS_ENCODER(MGWZoneGroup)
+
+class MotrZone {
   protected:
     MotrStore* store;
     RGWRealm *realm{nullptr};
-    RGWZoneGroup *zonegroup{nullptr};
+    MGWZoneGroup *zonegroup{nullptr};
     RGWZone *zone_public_config{nullptr}; /* external zone params, e.g., entrypoints, log flags, etc. */
     RGWZoneParams *zone_params{nullptr}; /* internal zone params, e.g., rados pools */
     RGWPeriod *current_period{nullptr};
@@ -362,7 +402,9 @@ class MotrZone : public Zone {
   public:
     MotrZone(MotrStore* _store) : store(_store) {
       realm = new RGWRealm();
-      zonegroup = new RGWZoneGroup();
+      string::default_zg_id = "0956b174-fe14-4f97-8b50-bb7ec5e1cf62";
+      string::default_zg_name = "default";
+      zonegroup = new MGWZoneGroup(default_zg_id, default_zg_name, true);
       zone_public_config = new RGWZone();
       zone_params = new RGWZoneParams();
       current_period = new RGWPeriod();
@@ -377,8 +419,8 @@ class MotrZone : public Zone {
     }
     ~MotrZone() = default;
 
-    virtual const RGWZoneGroup& get_zonegroup() override;
-    virtual int get_zonegroup(const std::string& id, RGWZoneGroup& zonegroup) override;
+    virtual const MGWZoneGroup& get_zonegroup() override;
+    virtual int get_zonegroup(const std::string& id, MGWZoneGroup& zonegroup) override;
     virtual const RGWZoneParams& get_params() override;
     virtual const rgw_zone_id& get_id() override;
     virtual const RGWRealm& get_realm() override;

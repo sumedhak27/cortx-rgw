@@ -836,16 +836,19 @@ void MotrStore::finalize(void)
 {
 }
 
-const RGWZoneGroup& MotrZone::get_zonegroup()
+const MGWZoneGroup& MotrZone::get_zonegroup()
 {
   return *zonegroup;
 }
 
-int MotrZone::get_zonegroup(const std::string& id, RGWZoneGroup& zg)
+int MotrZone::get_zonegroup(const std::string& id, MGWZoneGroup& zg)
 {
   /* XXX: for now only one zonegroup supported */
-  zg = *zonegroup;
-  return 0;
+  if(id == zonegroup->get_id()) {
+    zg = *zonegroup;
+    return 0;
+  }
+  return -1;
 }
 
 const RGWZoneParams& MotrZone::get_params()
@@ -880,7 +883,7 @@ bool MotrZone::get_redirect_endpoint(std::string* endpoint)
 
 bool MotrZone::has_zonegroup_api(const std::string& api) const
 {
-  return false;
+  return (api == zonegroup->get_api_name());
 }
 
 const std::string& MotrZone::get_current_period_id()
