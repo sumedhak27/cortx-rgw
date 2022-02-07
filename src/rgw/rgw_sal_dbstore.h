@@ -261,7 +261,7 @@ protected:
       ~DBZone() = default;
 
       virtual const RGWZoneGroup& get_zonegroup() override;
-      virtual int get_zonegroup(const std::string& id, RGWZoneGroup& zonegroup) override;
+      virtual int get_zonegroup(const std::string& id, RGWZoneGroup* zonegroup) override;
       virtual const RGWZoneParams& get_params() override;
       virtual const rgw_zone_id& get_id() override;
       virtual const RGWRealm& get_realm() override;

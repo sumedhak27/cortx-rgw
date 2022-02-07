@@ -42,7 +42,7 @@ extern rgw::sal::Store* newStore(void);
 extern rgw::sal::Store* newDBStore(CephContext *cct);
 #endif
 #ifdef WITH_RADOSGW_MOTR
-extern rgw::sal::Store* newMotrStore(CephContext *cct);
+extern rgw::sal::Store* newMotrStore(CephContext *cct, const DoutPrefixProvider* dpp);
 #endif
 }
 
@@ -112,7 +112,7 @@ rgw::sal::Store* StoreManager::init_storage_provider(const DoutPrefixProvider* d
 
 #ifdef WITH_RADOSGW_MOTR
   if (svc.compare("motr") == 0) {
-    rgw::sal::Store* store = newMotrStore(cct);
+    rgw::sal::Store* store = newMotrStore(cct, dpp);
     if (store == nullptr) {
       ldpp_dout(dpp, 0) << "newMotrStore() failed!" << dendl;
       return store;
@@ -186,7 +186,7 @@ rgw::sal::Store* StoreManager::init_raw_storage_provider(const DoutPrefixProvide
 
   if (svc.compare("motr") == 0) {
 #ifdef WITH_RADOSGW_MOTR
-    store = newMotrStore(cct);
+    store = newMotrStore(cct, dpp);
 #else
     store = nullptr;
 #endif

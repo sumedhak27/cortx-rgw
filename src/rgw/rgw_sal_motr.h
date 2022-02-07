@@ -349,47 +349,51 @@ class MotrBucket : public Bucket {
     friend class MotrStore;
 };
 
-class MGWZoneGroup {
+struct MGWZoneGroup : public RGWZoneGroup {
   // TODO: Add members & functions related to zones, realm,.. ,etc.
-  protected:
-    std::string id
-    std::string api_name;
-    bool is_master = false;
+  // protected:
+  std::string id;
+  std::string api_name;
+  bool is_master = false;
+  MGWZoneGroup(): is_master(false){}
+  MGWZoneGroup(const std::string &_id, const std::string &_name, bool _is_master) {
+    id = _id;
+    api_name = _name;
+    is_master = _is_master;
+  }
+  MGWZoneGroup(const MGWZoneGroup &zg) {
+    id = zg.id;
+    api_name = zg.api_name;
+    is_master = zg.is_master;
+  }
 
-  public:
-    MGWZoneGroup(): is_master(false){}
-    MGWZonwGroup(const std::string &_id, const std::string &_name, bool _is_master=false)
-      : id(_id), api_name(_name), is_master(_is_master) {}
+  const std::string& get_id() const { return id;}
+  const std::string& get_api_name() const { return api_name;}
+  bool is_master_zonegroup() const { return is_master;}
+  void update_master(const DoutPrefixProvider *dpp, bool _is_master, optional_yield y) {
+    is_master = _is_master;
+    // In multi-site config post param processing is needed.
+  }
 
-    std::string get_id() const { return id;}
-    std::string get_api_name() const { return api_name;}
-    bool is_master_zonegroup() const { return is_master;}
-    void update_master(const DoutPrefixProvider *dpp, bool _is_master, optional_yield y) {
-      is_master = _is_master;
-      // In multi-site config post param processing is needed.
-    }
+  void encode(bufferlist& bl) const override {
+    ENCODE_START(5, 1, bl);
+    encode(id, bl);
+    encode(api_name, bl);
+    encode(is_master, bl);
+    ENCODE_FINISH(bl);
+  }
 
-    void encode(bufferlist& bl) const override {
-      ENCODE_START(5, 1, bl);
-      encode(name, bl);
-      encode(id, bl);
-      encode(api_name, bl);
-      encode(is_master, bl);
-      ENCODE_FINISH(bl);
-    }
-
-    void decode(bufferlist::const_iterator& bl) override {
-      DECODE_START(5, bl);
-      decode(name, bl);
-      decode(id, bl);
-      decode(api_name, bl);
-      decode(is_master, bl);
-      DECODE_FINISH(bl);
-    }
+  void decode(bufferlist::const_iterator& bl) override {
+    DECODE_START(5, bl);
+    decode(id, bl);
+    decode(api_name, bl);
+    decode(is_master, bl);
+    DECODE_FINISH(bl);
+  }
 };
 WRITE_CLASS_ENCODER(MGWZoneGroup)
 
-class MotrZone {
+class MotrZone : public Zone {
   protected:
     MotrStore* store;
     RGWRealm *realm{nullptr};
@@ -402,9 +406,12 @@ class MotrZone {
   public:
     MotrZone(MotrStore* _store) : store(_store) {
       realm = new RGWRealm();
-      string::default_zg_id = "0956b174-fe14-4f97-8b50-bb7ec5e1cf62";
-      string::default_zg_name = "default";
-      zonegroup = new MGWZoneGroup(default_zg_id, default_zg_name, true);
+      std::string default_zg_id = "0956b174-fe14-4f97-8b50-bb7ec5e1cf62";
+      std::string default_zg_name = "default";
+      zonegroup = new MGWZoneGroup();
+      zonegroup->id = default_zg_id;
+      zonegroup->api_name = default_zg_name;
+      zonegroup->is_master = true;
       zone_public_config = new RGWZone();
       zone_params = new RGWZoneParams();
       current_period = new RGWPeriod();
@@ -419,8 +426,9 @@ class MotrZone {
     }
     ~MotrZone() = default;
 
-    virtual const MGWZoneGroup& get_zonegroup() override;
-    virtual int get_zonegroup(const std::string& id, MGWZoneGroup& zonegroup) override;
+    virtual const MGWZoneGroup& get_zonegroup();
+    // virtual int get_zonegroup(const std::string& id, MGWZoneGroup& zonegroup);
+    virtual int get_zonegroup(const std::string& id, RGWZoneGroup* zonegroup) override;
     virtual const RGWZoneParams& get_params() override;
     virtual const rgw_zone_id& get_id() override;
     virtual const RGWRealm& get_realm() override;
@@ -892,7 +900,7 @@ class MotrStore : public Store {
     virtual int forward_request_to_master(const DoutPrefixProvider *dpp, User* user, obj_version* objv,
         bufferlist& in_data, JSONParser *jp, req_info& info,
         optional_yield y) override;
-    virtual Zone* get_zone() { return &zone; }
+    virtual MotrZone* get_zone() { return &zone; }
     virtual std::string zone_unique_id(uint64_t unique_num) override;
     virtual std::string zone_unique_trans_id(const uint64_t unique_num) override;
     virtual int cluster_stat(RGWClusterStat& stats) override;

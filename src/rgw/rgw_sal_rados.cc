@@ -2665,7 +2665,7 @@ const RGWZoneGroup& RadosZone::get_zonegroup()
   return store->svc()->zone->get_zonegroup();
 }
 
-int RadosZone::get_zonegroup(const std::string& id, RGWZoneGroup& zonegroup)
+int RadosZone::get_zonegroup(const std::string& id, RGWZoneGroup* zonegroup)
 {
   return store->svc()->zone->get_zonegroup(id, zonegroup);
 }

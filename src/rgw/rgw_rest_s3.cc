@@ -58,7 +58,9 @@
 #include "rgw_crypt_sanitize.h"
 #include "rgw_rest_user_policy.h"
 #include "rgw_zone.h"
+#include "rgw_sal_motr.h"
 #include "rgw_bucket_sync.h"
+#include <typeinfo>
 
 #include "services/svc_zone.h"
 #include "services/svc_cls.h"
@@ -1900,17 +1902,45 @@ void RGWGetBucketLocation_ObjStore_S3::send_response()
   end_header(s, this);
   dump_start(s);
 
-  RGWZoneGroup zonegroup;
   string api_name;
+#ifdef WITH_RADOSGW_MOTR
+  rgw::sal::MGWZoneGroup* zonegroup;
+  ldpp_dout(this, 0) << "Sumedh : " << s->bucket->get_info().zonegroup << dendl;
+  ldpp_dout(this, 0) << "Sumedh : " << typeid(store->get_zone()->get_zonegroup()).name() << dendl;
 
   int ret = store->get_zone()->get_zonegroup(s->bucket->get_info().zonegroup, zonegroup);
+
+  ldpp_dout(this, 0) << "return code : " << ret << dendl;
+  ldpp_dout(this, 0) << "zonegroup type (mgw) : " << typeid(*zonegroup).name() << dendl;
+  ldpp_dout(this, 0) << "zonegroup->api_name : " << zonegroup->api_name << dendl;
+
   if (ret >= 0) {
-    api_name = zonegroup.api_name;
+    api_name = zonegroup->api_name;
   } else  {
     if (s->bucket->get_info().zonegroup != "default") {
       api_name = s->bucket->get_info().zonegroup;
     }
   }
+#else
+  RGWZoneGroup* zonegroup;
+  ldpp_dout(this, 0) << "Sumedh : " << s->bucket->get_info().zonegroup << dendl;
+  ldpp_dout(this, 0) << "Sumedh : " << typeid(store->get_zone()->get_zonegroup()).name() << dendl;
+
+  int ret = store->get_zone()->get_zonegroup(s->bucket->get_info().zonegroup, zonegroup);
+
+  ldpp_dout(this, 0) << "return code : " << ret << dendl;
+  ldpp_dout(this, 0) << "zonegroup type (rgw) : " << typeid(*zonegroup).name() << dendl;
+  ldpp_dout(this, 0) << "zonegroup.api_name : " << zonegroup->api_name << dendl; 
+
+  if (ret >= 0) {
+    api_name = zonegroup->api_name;
+  } else  {
+    if (s->bucket->get_info().zonegroup != "default") {
+      api_name = s->bucket->get_info().zonegroup;
+    }
+  }
+#endif
+
 
   s->formatter->dump_format_ns("LocationConstraint", XMLNS_AWS_S3,
 			       "%s", api_name.c_str());

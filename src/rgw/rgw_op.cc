@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <system_error>
 #include <unistd.h>
+#include <typeinfo>
 
 #include <sstream>
 #include <string_view>
@@ -532,19 +533,19 @@ int rgw_build_bucket_policies(const DoutPrefixProvider *dpp, rgw::sal::Store* st
 
     s->bucket_owner = s->bucket_acl->get_owner();
 
-    RGWZoneGroup zonegroup;
+    RGWZoneGroup* zonegroup;
     int r = store->get_zone()->get_zonegroup(s->bucket->get_info().zonegroup, zonegroup);
     if (!r) {
-      if (!zonegroup.endpoints.empty()) {
-	s->zonegroup_endpoint = zonegroup.endpoints.front();
+      if (!zonegroup->endpoints.empty()) {
+	s->zonegroup_endpoint = zonegroup->endpoints.front();
       } else {
         // use zonegroup's master zone endpoints
-        auto z = zonegroup.zones.find(zonegroup.master_zone);
-        if (z != zonegroup.zones.end() && !z->second.endpoints.empty()) {
+        auto z = zonegroup->zones.find(zonegroup->master_zone);
+        if (z != zonegroup->zones.end() && !z->second.endpoints.empty()) {
           s->zonegroup_endpoint = z->second.endpoints.front();
         }
       }
-      s->zonegroup_name = zonegroup.get_name();
+      s->zonegroup_name = zonegroup->get_name();
     }
     if (r < 0 && ret == 0) {
       ret = r;
@@ -3194,6 +3195,10 @@ void RGWCreateBucket::execute(optional_yield y)
   }
 
   const auto& zonegroup = store->get_zone()->get_zonegroup();
+  ldpp_dout(this, 0) << "Sumedh store type : " << typeid(*store).name() << dendl;
+  ldpp_dout(this, 0) << "Sumedh zeonegroup type : " << typeid(zonegroup).name() << dendl; 
+  ldpp_dout(this, 0) << "Sumedh zonegroup name : " << zonegroup.api_name << dendl;
+
   if (!placement_rule.name.empty() &&
       !zonegroup.placement_targets.count(placement_rule.name)) {
     ldpp_dout(this, 0) << "placement target (" << placement_rule.name << ")"
@@ -3233,11 +3238,14 @@ void RGWCreateBucket::execute(optional_yield y)
 
   if (s->system_request) {
     zonegroup_id = s->info.args.get(RGW_SYS_PARAM_PREFIX "zonegroup");
+    ldpp_dout(this, 0) << "in system request" << dendl;
     if (zonegroup_id.empty()) {
       zonegroup_id = store->get_zone()->get_zonegroup().get_id();
+      ldpp_dout(this, 0) << "zongroup_id was empty set to : " << zonegroup_id << dendl;
     }
   } else {
     zonegroup_id = store->get_zone()->get_zonegroup().get_id();
+    ldpp_dout(this, 0) << "zonegroup_id fetched from store : " << zonegroup_id << dendl;
   }
 
   /* Encode special metadata first as we're using std::map::emplace under
@@ -3293,6 +3301,7 @@ void RGWCreateBucket::execute(optional_yield y)
 				pquota_info, policy, attrs, info, ep_objv,
 				true, obj_lock_enabled, &s->bucket_exists, s->info,
 				&s->bucket, y);
+  ldpp_dout(this, 0) << "create user called with zonegroup_id."<< dendl;
 
   /* continue if EEXIST and create_bucket will fail below.  this way we can
    * recover from a partial create by retrying it. */

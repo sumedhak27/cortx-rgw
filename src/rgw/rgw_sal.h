@@ -25,6 +25,7 @@ class RGWAccessListFilter;
 class RGWLC;
 class RGWObjManifest;
 struct RGWZoneGroup;
+// struct MGWZoneGroup;
 struct RGWZoneParams;
 struct RGWRealm;
 struct RGWCtl;
@@ -1400,7 +1401,7 @@ class Zone {
     /** Get info about the zonegroup containing this zone */
     virtual const RGWZoneGroup& get_zonegroup() = 0;
     /** Get info about a zonegroup by ID */
-    virtual int get_zonegroup(const std::string& id, RGWZoneGroup& zonegroup) = 0;
+    virtual int get_zonegroup(const std::string& id, RGWZoneGroup* zonegroup) = 0;
     /** Get the parameters of this zone */
     virtual const RGWZoneParams& get_params() = 0;
     /** Get the ID of this zone */

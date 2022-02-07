@@ -18,6 +18,7 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <typeinfo>
 
 extern "C" {
 #pragma clang diagnostic push
@@ -841,14 +842,23 @@ const MGWZoneGroup& MotrZone::get_zonegroup()
   return *zonegroup;
 }
 
-int MotrZone::get_zonegroup(const std::string& id, MGWZoneGroup& zg)
+// int MotrZone::get_zonegroup(const std::string& id, MGWZoneGroup& zg)
+// {
+
+//   /* XXX: for now only one zonegroup supported */
+//   // if(true) {
+//   // if(id == zonegroup->get_id()) {
+//   zg = *zonegroup;
+//   return 27;
+//   // }
+//   // return -1;
+// }
+
+int MotrZone::get_zonegroup(const std::string& id, RGWZoneGroup* zg)
 {
   /* XXX: for now only one zonegroup supported */
-  if(id == zonegroup->get_id()) {
-    zg = *zonegroup;
-    return 0;
-  }
-  return -1;
+  zg = zonegroup;
+  return 99;
 }
 
 const RGWZoneParams& MotrZone::get_params()
@@ -3435,12 +3445,17 @@ int MotrStore::init_metadata_cache(const DoutPrefixProvider *dpp,
 
 extern "C" {
 
-void *newMotrStore(CephContext *cct)
+void *newMotrStore(CephContext *cct, const DoutPrefixProvider* dpp)
 {
   int rc = -1;
   rgw::sal::MotrStore *store = new rgw::sal::MotrStore(cct);
 
   if (store) {
+    // store->get_zone()->get_zonegroup().id = "saldkfjskdhflskfdslsifjlaks";
+    // store->get_zone()->get_zonegroup().api_name = "default";
+    // store->get_zone()->get_zonegroup().is_master = true;
+    // ldout(cct, 0) << typeid(store->get_zone()->get_zonegroup()).name() << dendl;
+  
     store->conf.mc_is_oostore     = true;
     // XXX: these params should be taken from config settings and
     // cct somehow?

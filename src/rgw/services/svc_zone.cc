@@ -957,13 +957,13 @@ const RGWZoneGroup& RGWSI_Zone::get_zonegroup() const
   return *zonegroup;
 }
 
-int RGWSI_Zone::get_zonegroup(const string& id, RGWZoneGroup& zg) const
+int RGWSI_Zone::get_zonegroup(const string& id, RGWZoneGroup* zg) const
 {
   int ret = 0;
   if (id == zonegroup->get_id()) {
-    zg = *zonegroup;
+    zg = zonegroup;
   } else if (!current_period->get_id().empty()) {
-    ret = current_period->get_zonegroup(zg, id);
+    ret = current_period->get_zonegroup(*zg, id);
   }
   return ret;
 }
@@ -1118,7 +1118,7 @@ int RGWSI_Zone::select_new_bucket_location(const DoutPrefixProvider *dpp, const 
 					   optional_yield y)
 {
   /* first check that zonegroup exists within current period. */
-  RGWZoneGroup zonegroup;
+  RGWZoneGroup* zonegroup;
   int ret = get_zonegroup(zonegroup_id, zonegroup);
   if (ret < 0) {
     ldpp_dout(dpp, 0) << "could not find zonegroup " << zonegroup_id << " in current period" << dendl;
@@ -1132,29 +1132,29 @@ int RGWSI_Zone::select_new_bucket_location(const DoutPrefixProvider *dpp, const 
 
   if (!request_rule.name.empty()) {
     used_rule = &request_rule;
-    titer = zonegroup.placement_targets.find(request_rule.name);
-    if (titer == zonegroup.placement_targets.end()) {
+    titer = zonegroup->placement_targets.find(request_rule.name);
+    if (titer == zonegroup->placement_targets.end()) {
       ldpp_dout(dpp, 0) << "could not find requested placement id " << request_rule 
                     << " within zonegroup " << dendl;
       return -ERR_INVALID_LOCATION_CONSTRAINT;
     }
   } else if (!user_info.default_placement.name.empty()) {
     used_rule = &user_info.default_placement;
-    titer = zonegroup.placement_targets.find(user_info.default_placement.name);
-    if (titer == zonegroup.placement_targets.end()) {
+    titer = zonegroup->placement_targets.find(user_info.default_placement.name);
+    if (titer == zonegroup->placement_targets.end()) {
       ldpp_dout(dpp, 0) << "could not find user default placement id " << user_info.default_placement
                     << " within zonegroup " << dendl;
       return -ERR_INVALID_LOCATION_CONSTRAINT;
     }
   } else {
-    if (zonegroup.default_placement.name.empty()) { // zonegroup default rule as fallback, it should not be empty.
+    if (zonegroup->default_placement.name.empty()) { // zonegroup default rule as fallback, it should not be empty.
       ldpp_dout(dpp, 0) << "misconfiguration, zonegroup default placement id should not be empty." << dendl;
       return -ERR_ZONEGROUP_DEFAULT_PLACEMENT_MISCONFIGURATION;
     } else {
-      used_rule = &zonegroup.default_placement;
-      titer = zonegroup.placement_targets.find(zonegroup.default_placement.name);
-      if (titer == zonegroup.placement_targets.end()) {
-        ldpp_dout(dpp, 0) << "could not find zonegroup default placement id " << zonegroup.default_placement
+      used_rule = &zonegroup->default_placement;
+      titer = zonegroup->placement_targets.find(zonegroup->default_placement.name);
+      if (titer == zonegroup->placement_targets.end()) {
+        ldpp_dout(dpp, 0) << "could not find zonegroup default placement id " << zonegroup->default_placement
                       << " within zonegroup " << dendl;
         return -ERR_INVALID_LOCATION_CONSTRAINT;
       }

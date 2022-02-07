@@ -511,10 +511,10 @@ namespace rgw::sal {
     return *zonegroup;
   }
 
-  int DBZone::get_zonegroup(const std::string& id, RGWZoneGroup& zg)
+  int DBZone::get_zonegroup(const std::string& id, RGWZoneGroup* zg)
   {
     /* XXX: for now only one zonegroup supported */
-    zg = *zonegroup;
+    zg = zonegroup;
     return 0;
   }
 

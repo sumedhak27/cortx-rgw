@@ -89,7 +89,7 @@ public:
   const RGWPeriod& get_current_period() const;
   const RGWRealm& get_realm() const;
   const RGWZoneGroup& get_zonegroup() const;
-  int get_zonegroup(const std::string& id, RGWZoneGroup& zonegroup) const;
+  int get_zonegroup(const std::string& id, RGWZoneGroup* zonegroup) const;
   const RGWZone& get_zone() const;
 
   std::shared_ptr<RGWBucketSyncPolicyHandler> get_sync_policy_handler(std::optional<rgw_zone_id> zone = std::nullopt) const;

@@ -275,6 +275,7 @@ static int sign_request(const DoutPrefixProvider *dpp, RGWAccessKey& key,
 
 static string extract_region_name(string&& s)
 {
+  std::cout << "Sumedh > from extract_region_name : " << s << std::endl;
   if (s == "s3") {
       return "us-east-1";
   }
@@ -304,6 +305,7 @@ static bool identify_scope(const DoutPrefixProvider *dpp,
 
   for (auto iter = vec.begin(); iter != vec.end(); ++iter) {
     auto& s = *iter;
+    ldpp_dout(dpp, 0) << "Sumedh> from identify_scope : " << s << dendl;
     if (s == "s3" ||
         s == "execute-api") {
       if (s == "execute-api") {
@@ -316,12 +318,14 @@ static bool identify_scope(const DoutPrefixProvider *dpp,
       }
       auto& next = *iter;
       if (next == "amazonaws") {
+        ldpp_dout(dpp, 0) << "Hi Sumedh, setting the region as us-east-1" << dendl;
         *region = "us-east-1";
         return true;
       }
       *region = next;
       return true;
     } else if (boost::algorithm::starts_with(s, "s3-")) {
+      ldpp_dout(dpp, 0) << "Hi Sumedh, passing s to extract region name " << s << dendl;
       *region = extract_region_name(std::move(s));
       return true;
     }
