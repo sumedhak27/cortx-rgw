@@ -170,7 +170,7 @@ int MotrUser::list_buckets(const DoutPrefixProvider *dpp, const string& marker,
 
   // Retrieve all `max` number of pairs.
   buckets.clear();
-  string user_info_iname = "motr.rgw.user.info." + info.user_id.id;
+  string user_info_iname = "motr.rgw.user.info." + info.user_id.to_str();
   keys[0] = marker;
   rc = store->next_query_by_name(user_info_iname, keys, vals);
   if (rc < 0) {
@@ -232,10 +232,10 @@ int MotrUser::create_bucket(const DoutPrefixProvider* dpp,
 
   if (ret != -ENOENT) {
     *existed = true;
-    if (swift_ver_location.empty()) {
-      swift_ver_location = bucket->get_info().swift_ver_location;
-    }
-    placement_rule.inherit_from(bucket->get_info().placement_rule);
+    // if (swift_ver_location.empty()) {
+    //   swift_ver_location = bucket->get_info().swift_ver_location;
+    // }
+    // placement_rule.inherit_from(bucket->get_info().placement_rule);
 
     // TODO: ACL policy
     // // don't allow changes to the acl policy
@@ -247,17 +247,16 @@ int MotrUser::create_bucket(const DoutPrefixProvider* dpp,
     //    return -EEXIST;
     //}
   } else {
+
     placement_rule.name = "default";
     placement_rule.storage_class = "STANDARD";
     bucket = std::make_unique<MotrBucket>(store, b, this);
     bucket->set_attrs(attrs);
-
     *existed = false;
   }
 
-  // TODO: how to handle zone and multi-site.
-
-  if (!*existed) {
+  if (!*existed){
+    // TODO: how to handle zone and multi-site.
     info.placement_rule = placement_rule;
     info.bucket = b;
     info.owner = this->get_info().user_id;
@@ -281,8 +280,9 @@ int MotrUser::create_bucket(const DoutPrefixProvider* dpp,
      if (ret < 0)
        ldpp_dout(dpp, 0) << "ERROR: failed to add bucket entry! " << ret << dendl;
   } else {
-    bucket->set_version(ep_objv);
-    bucket->get_info() = info;
+    return -EEXIST;
+    // bucket->set_version(ep_objv);
+    // bucket->get_info() = info;
   }
 
   bucket_out->swap(bucket);
@@ -326,10 +326,10 @@ int MotrUser::trim_usage(const DoutPrefixProvider *dpp, uint64_t start_epoch, ui
   return 0;
 }
 
-static int load_user_from_idx(const DoutPrefixProvider *dpp,
+int MotrUser::load_user_from_idx(const DoutPrefixProvider *dpp,
                               MotrStore *store,
                               RGWUserInfo& info, map<string, bufferlist> *attrs,
-                              RGWObjVersionTracker *objv_tracker)
+                              RGWObjVersionTracker *objv_tr)
 {
   struct MotrUserInfo muinfo;
   bufferlist bl;
@@ -337,7 +337,7 @@ static int load_user_from_idx(const DoutPrefixProvider *dpp,
   if (store->get_user_cache()->get(dpp, info.user_id.id, bl)) {
     // Cache misses
     int rc = store->do_idx_op_by_name(RGW_MOTR_USERS_IDX_NAME,
-                                      M0_IC_GET, info.user_id.id, bl);
+                                      M0_IC_GET, info.user_id.to_str(), bl);
     ldpp_dout(dpp, 20) << "do_idx_op_by_name() = "  << rc << dendl;
     if (rc < 0)
         return rc;
@@ -352,8 +352,11 @@ static int load_user_from_idx(const DoutPrefixProvider *dpp,
   info = muinfo.info;
   if (attrs)
     *attrs = muinfo.attrs;
-  if (objv_tracker)
-    objv_tracker->read_version = muinfo.user_version;
+  if (objv_tr)
+  {
+    objv_tr->read_version = muinfo.user_version;
+    objv_tracker.read_version = objv_tr->read_version;
+  }
 
   return 0;
 }
@@ -367,7 +370,7 @@ int MotrUser::load_user(const DoutPrefixProvider *dpp,
 
 int MotrUser::create_user_info_idx()
 {
-  string user_info_iname = "motr.rgw.user.info." + info.user_id.id;
+  string user_info_iname = "motr.rgw.user.info." + info.user_id.to_str();
   return store->create_motr_idx_by_name(user_info_iname);
 }
 
@@ -389,18 +392,8 @@ int MotrUser::store_user(const DoutPrefixProvider* dpp,
   obj_version& obj_ver = objv_tr.read_version;
 
   ldpp_dout(dpp, 20) << "Store_user(): User = " << info.user_id.id << dendl;
-  std::string access_key;
-  std::string secret_key;
-  if (!info.access_keys.empty()) {
-    std::map<std::string, RGWAccessKey>::const_iterator iter = info.access_keys.begin();
-    const RGWAccessKey& k = iter->second;
-    access_key = k.id;
-    secret_key = k.key;
-    MotrAccessKey MGWUserKeys(access_key, secret_key, info.user_id.id);
-    store->store_access_key(dpp, y, MGWUserKeys);
-  }
 
-  orig_info.user_id.id = info.user_id.id;
+  orig_info.user_id = info.user_id;
   // XXX: we open and close motr idx 2 times in this method:
   // 1) on load_user_from_idx() here and 2) on do_idx_op_by_name(PUT) below.
   // Maybe this can be optimised later somewhow.
@@ -433,11 +426,23 @@ int MotrUser::store_user(const DoutPrefixProvider* dpp,
   muinfo.user_version = obj_ver;
   muinfo.encode(bl);
   rc = store->do_idx_op_by_name(RGW_MOTR_USERS_IDX_NAME,
-                                M0_IC_PUT, info.user_id.id, bl);
+                                M0_IC_PUT, info.user_id.to_str(), bl);
   ldpp_dout(dpp, 10) << "Store user to motr index: rc = " << rc << dendl;
   if (rc == 0) {
     objv_tracker.read_version = obj_ver;
     objv_tracker.write_version = obj_ver;
+  }
+  
+  // Store access key in access key index
+  if (!info.access_keys.empty()) {
+    std::string access_key;
+    std::string secret_key;
+    std::map<std::string, RGWAccessKey>::const_iterator iter = info.access_keys.begin();
+    const RGWAccessKey& k = iter->second;
+    access_key = k.id;
+    secret_key = k.key;
+    MotrAccessKey MGWUserKeys(access_key, secret_key, info.user_id.to_str());
+    store->store_access_key(dpp, y, MGWUserKeys);
   }
 
   // Create user info index to store all buckets that are belong
@@ -449,7 +454,7 @@ int MotrUser::store_user(const DoutPrefixProvider* dpp,
   }
 
   // Put the user info into cache.
-  store->get_user_cache()->put(dpp, info.user_id.id, bl);
+  rc = store->get_user_cache()->put(dpp, info.user_id.id, bl);
 
 out:
   return rc;
@@ -664,7 +669,7 @@ int MotrBucket::link_user(const DoutPrefixProvider* dpp, User* new_user, optiona
   ldpp_dout(dpp, 20) << "got creation time: << " << std::put_time(std::localtime(&ctime), "%F %T") << dendl;
 
   // Insert the user into the user info index.
-  string user_info_idx_name = "motr.rgw.user.info." + new_user->get_info().user_id.id;
+  string user_info_idx_name = "motr.rgw.user.info." + new_user->get_info().user_id.to_str();
   return store->do_idx_op_by_name(user_info_idx_name,
                                   M0_IC_PUT, info.bucket.name, bl);
 
@@ -674,7 +679,7 @@ int MotrBucket::unlink_user(const DoutPrefixProvider* dpp, User* new_user, optio
 {
   // Remove the user into the user info index.
   bufferlist bl;
-  string user_info_idx_name = "motr.rgw.user.info." + new_user->get_info().user_id.id;
+  string user_info_idx_name = "motr.rgw.user.info." + new_user->get_info().user_id.to_str();
   return store->do_idx_op_by_name(user_info_idx_name,
                                   M0_IC_DEL, info.bucket.name, bl);
 }
@@ -1495,7 +1500,8 @@ MotrAtomicWriter::MotrAtomicWriter(const DoutPrefixProvider *dpp,
               ptail_placement_rule(_ptail_placement_rule),
               olh_epoch(_olh_epoch),
               unique_tag(_unique_tag),
-              obj(_store, _head_obj->get_key(), _head_obj->get_bucket()) {}
+              obj(_store, _head_obj->get_key(), _head_obj->get_bucket()),
+              old_obj(_store, _head_obj->get_key(), _head_obj->get_bucket()) {}
 
 static const unsigned MAX_BUFVEC_NR = 256;
 
@@ -1506,7 +1512,13 @@ int MotrAtomicWriter::prepare(optional_yield y)
   if (obj.is_opened())
     return 0;
 
-  int rc = m0_bufvec_empty_alloc(&buf, MAX_BUFVEC_NR) ?:
+  rgw_bucket_dir_entry ent;
+  int rc = old_obj.get_bucket_dir_ent(dpp, ent);
+  if (rc == 0) {
+    ldpp_dout(dpp, 20) << __func__ << ": object exists." << dendl;
+  }
+
+  rc = m0_bufvec_empty_alloc(&buf, MAX_BUFVEC_NR) ?:
            m0_bufvec_alloc(&attr, MAX_BUFVEC_NR, 1) ?:
            m0_indexvec_alloc(&ext, MAX_BUFVEC_NR);
   if (rc != 0)
@@ -1623,6 +1635,13 @@ int MotrObject::open_mobj(const DoutPrefixProvider *dpp)
 int MotrObject::delete_mobj(const DoutPrefixProvider *dpp)
 {
   int rc;
+  char fid_str[M0_FID_STR_LEN];
+  snprintf(fid_str, ARRAY_SIZE(fid_str), U128X_F, U128_P(&meta.oid));
+  if (!meta.oid.u_hi || !meta.oid.u_lo) {
+    ldpp_dout(dpp, 20) << __func__ << ": invalid motr object oid=" << fid_str << dendl;
+    return -EINVAL;
+  }
+  ldpp_dout(dpp, 20) << __func__ << ": deleting motr object oid=" << fid_str << dendl;
 
   // Open the object.
   if (mobj == nullptr) {
@@ -1870,6 +1889,9 @@ out:
     decode(dummy, iter);
     meta.decode(iter);
     ldpp_dout(dpp, 20) <<__func__<< ": lid=0x" << std::hex << meta.layout_id << dendl;
+    char fid_str[M0_FID_STR_LEN];
+    snprintf(fid_str, ARRAY_SIZE(fid_str), U128X_F, U128_P(&meta.oid));
+    ldpp_dout(dpp, 70) << __func__ << ": oid=" << fid_str << dendl;
   } else
     ldpp_dout(dpp, 0) <<__func__<< ": rc=" << rc << dendl;
 
@@ -2102,6 +2124,7 @@ void MotrAtomicWriter::cleanup()
   m0_bufvec_free2(&buf);
   acc_data.clear();
   obj.close_mobj();
+  old_obj.close_mobj();
 }
 
 unsigned MotrAtomicWriter::populate_bvec(unsigned len, bufferlist::iterator &bi)
@@ -2306,6 +2329,13 @@ int MotrAtomicWriter::complete(size_t accounted_size, const std::string& etag,
   if (rc == 0)
     store->get_obj_meta_cache()->put(dpp, obj.get_key().to_str(), bl);
 
+  if (old_obj.get_bucket()->get_info().versioning_status() != BUCKET_VERSIONED) {
+    // Delete old object data if exists.
+    old_obj.delete_mobj(dpp);
+  }
+
+  // TODO: We need to handle the object leak caused by parallel object upload by
+  // making use of background gc, which is currently not enabled for motr.
   return rc;
 }
 
@@ -2998,9 +3028,9 @@ int MotrStore::get_user_by_access_key(const DoutPrefixProvider *dpp, const std::
   auto iter = blr.cbegin();
   access_key.decode(iter);
 
-  uinfo.user_id.id = access_key.user_id;
+  uinfo.user_id.from_str(access_key.user_id);
   ldout(cctx, 0) << "Loading user: " << uinfo.user_id.id << dendl;
-  rc = load_user_from_idx(dpp, this, uinfo, nullptr, nullptr);
+  rc = MotrUser().load_user_from_idx(dpp, this, uinfo, nullptr, nullptr);
   if (rc < 0){
     ldout(cctx, 0) << "Failed to load user: rc = " << rc << dendl;
     return rc;
