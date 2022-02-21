@@ -471,7 +471,6 @@ class MotrObject : public Object {
     uint64_t part_off;
     uint64_t part_size;
     uint64_t part_num;
-    const int OBJ_INSTANCE_LEN;
 
   public:
 
@@ -539,9 +538,9 @@ class MotrObject : public Object {
     MotrObject() = default;
 
     MotrObject(MotrStore *_st, const rgw_obj_key& _k)
-      : Object(_k), store(_st), acls(), state(NULL), OBJ_INSTANCE_LEN(32) {}
+      : Object(_k), store(_st), acls(), state(NULL) {}
     MotrObject(MotrStore *_st, const rgw_obj_key& _k, Bucket* _b)
-      : Object(_k, _b), store(_st), acls(), state(NULL), OBJ_INSTANCE_LEN(32) {}
+      : Object(_k, _b), store(_st), acls(), state(NULL) {}
 
     MotrObject(MotrObject& _o) = default;
 

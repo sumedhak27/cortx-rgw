@@ -1187,6 +1187,7 @@ bool MotrObject::is_expired() {
 // Taken from rgw_rados.cc
 void MotrObject::gen_rand_obj_instance_name()
 {
+  enum {OBJ_INSTANCE_LEN = 32};
   char buf[OBJ_INSTANCE_LEN + 1];
 
   gen_rand_alphanumeric_no_underscore(store->ctx(), buf, OBJ_INSTANCE_LEN);
