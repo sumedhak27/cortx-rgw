@@ -905,23 +905,34 @@ std::unique_ptr<Object> MotrBucket::get_object(const rgw_obj_key& k)
 int MotrBucket::list(const DoutPrefixProvider *dpp, ListParams& params, int max, ListResults& results, optional_yield y)
 {
   int rc;
+  // Fetching an extra key if available to ensure presence of next obj.
+  max++;
   vector<string> keys(max);
   vector<bufferlist> vals(max);
 
   ldpp_dout(dpp, 20) << "bucket=" << info.bucket.name
                     << " prefix=" << params.prefix
                     << " marker=" << params.marker
-                    << " max=" << max << dendl;
+                    << " max=" << max-1 << dendl;
 
   // Retrieve all `max` number of pairs.
   string bucket_index_iname = "motr.rgw.bucket.index." + info.bucket.name;
   keys[0] = params.marker.empty() ? params.prefix :
-                                    params.marker.to_str();
+                                    params.marker.to_str() + " ";
   rc = store->next_query_by_name(bucket_index_iname, keys, vals, params.prefix,
                                                                  params.delim);
   if (rc < 0) {
     ldpp_dout(dpp, 0) << "ERROR: NEXT query failed. " << rc << dendl;
     return rc;
+  }
+
+  // Check if an extra key was fetched or not
+  if (rc == max) {
+    results.is_truncated = true;
+    results.next_marker = keys[max - 2];
+    rc--;
+  } else {
+    results.is_truncated = false;
   }
 
   // Process the returned pairs to add into ListResults.
@@ -936,13 +947,6 @@ int MotrBucket::list(const DoutPrefixProvider *dpp, ListParams& params, int max,
       if (params.list_versions || ent.is_visible())
         results.objs.emplace_back(std::move(ent));
     }
-  }
-
-  if (i == max) {
-    results.is_truncated = true;
-    results.next_marker = keys[max - 1] + " ";
-  } else {
-    results.is_truncated = false;
   }
 
   return 0;
@@ -3516,7 +3520,8 @@ int MotrStore::next_query_by_name(string idx_name,
                                   vector<bufferlist>& val_out,
                                   string prefix, string delim)
 {
-  unsigned nr_kvp = std::min(val_out.size(), 100UL);
+  // Caping the max-keys retreival to 1000 + 1 (extra) key.
+  unsigned nr_kvp = std::min(val_out.size(), 1001UL);
   struct m0_idx idx = {};
   vector<vector<uint8_t>> keys(nr_kvp);
   vector<vector<uint8_t>> vals(nr_kvp);
@@ -3576,6 +3581,9 @@ int MotrStore::next_query_by_name(string idx_name,
     else
       next_key = key_out[i + k - 1] + " ";
     ldout(cctx, 0) << "do_idx_next_op(): next_key=" << next_key << dendl;
+    // Resizing keys & vals vector to remaining keys to retreive.
+    keys.resize((int)nr_kvp - (i+k));
+    vals.resize((int)nr_kvp - (i+k));
     keys[0].assign(next_key.begin(), next_key.end());
   }
 
