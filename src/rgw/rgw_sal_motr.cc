@@ -917,8 +917,21 @@ int MotrBucket::list(const DoutPrefixProvider *dpp, ListParams& params, int max,
 
   // Retrieve all `max` number of pairs.
   string bucket_index_iname = "motr.rgw.bucket.index." + info.bucket.name;
-  keys[0] = params.marker.empty() ? params.prefix :
-                                    params.marker.to_str() + " ";
+
+  // Modify the marker based on its type
+  keys[0] = params.prefix;
+  if (!params.marker.empty()) {
+    keys[0] = params.marker.to_str();
+    // Get the position of delimiter string
+    int pos = keys[0].find(params.delim, params.prefix.length());
+    // If delimiter is present at the very end, append "\xff" to skip all
+    // the dir entries, else append " " to skip the maker key.
+    if (pos == (int)(keys[0].length() - params.delim.length()))
+      keys[0].append("\xff");
+    else
+      keys[0].append(" ");
+  }
+
   rc = store->next_query_by_name(bucket_index_iname, keys, vals, params.prefix,
                                                                  params.delim);
   if (rc < 0) {
@@ -3572,7 +3585,8 @@ int MotrStore::next_query_by_name(string idx_name,
       ++k;
     }
 
-    if (rc < (int)nr_kvp) // there are no more keys to fetch
+    keys_left = (int)nr_kvp - (i+k);
+    if (rc < (int)nr_kvp || keys_left <= 0)  // No more keys to fetch
       break;
 
     string next_key;
@@ -3581,9 +3595,9 @@ int MotrStore::next_query_by_name(string idx_name,
     else
       next_key = key_out[i + k - 1] + " ";
     ldout(cctx, 0) << "do_idx_next_op(): next_key=" << next_key << dendl;
-    // Resizing keys & vals vector to remaining keys to retreive.
-    keys.resize((int)nr_kvp - (i+k));
-    vals.resize((int)nr_kvp - (i+k));
+    // Resizing keys & vals vector to the size of remaining keys.
+    keys.resize(keys_left);
+    vals.resize(keys_left);
     keys[0].assign(next_key.begin(), next_key.end());
   }
 
