@@ -905,8 +905,9 @@ std::unique_ptr<Object> MotrBucket::get_object(const rgw_obj_key& k)
 int MotrBucket::list(const DoutPrefixProvider *dpp, ListParams& params, int max, ListResults& results, optional_yield y)
 {
   int rc;
-  // Fetching an extra key if available to ensure presence of next obj.
-  max++;
+  if (max <= 0)  // Return an emtpy response.
+    return 0;
+  max++;  // Fetch an extra key if available to ensure presence of next obj.
   vector<string> keys(max);
   vector<bufferlist> vals(max);
 
@@ -923,10 +924,10 @@ int MotrBucket::list(const DoutPrefixProvider *dpp, ListParams& params, int max,
   if (!params.marker.empty()) {
     keys[0] = params.marker.to_str();
     // Get the position of delimiter string
-    int pos = keys[0].find(params.delim, params.prefix.length());
+    int delim_pos = keys[0].find(params.delim, params.prefix.length());
     // If delimiter is present at the very end, append "\xff" to skip all
     // the dir entries, else append " " to skip the maker key.
-    if (pos == (int)(keys[0].length() - params.delim.length()))
+    if (delim_pos == (int)(keys[0].length() - params.delim.length()))
       keys[0].append("\xff");
     else
       keys[0].append(" ");
@@ -3585,7 +3586,7 @@ int MotrStore::next_query_by_name(string idx_name,
       ++k;
     }
 
-    keys_left = (int)nr_kvp - (i+k);
+    int keys_left = (int)nr_kvp - (i+k);  // i+k gives next index.
     if (rc < (int)nr_kvp || keys_left <= 0)  // No more keys to fetch
       break;
 
@@ -3595,7 +3596,7 @@ int MotrStore::next_query_by_name(string idx_name,
     else
       next_key = key_out[i + k - 1] + " ";
     ldout(cctx, 0) << "do_idx_next_op(): next_key=" << next_key << dendl;
-    // Resizing keys & vals vector to the size of remaining keys.
+    // Resizing keys & vals vector to the count of remaining keys.
     keys.resize(keys_left);
     vals.resize(keys_left);
     keys[0].assign(next_key.begin(), next_key.end());
