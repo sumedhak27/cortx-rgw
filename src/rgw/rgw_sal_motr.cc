@@ -951,8 +951,21 @@ int MotrBucket::list(const DoutPrefixProvider *dpp, ListParams& params, int max,
 
   // Retrieve all `max` number of pairs.
   string bucket_index_iname = "motr.rgw.bucket.index." + info.bucket.name;
-  keys[0] = params.marker.empty() ? params.prefix :
-                                    params.marker.to_str();
+
+  // Modify the marker based on its type
+  keys[0] = params.prefix;
+  if (!params.marker.empty()) {
+    keys[0] = params.marker.to_str();
+    // Get the position of delimiter string
+    int delim_pos = keys[0].find(params.delim, params.prefix.length());
+    // If delimiter is present at the very end, append "\xff" to skip all
+    // the dir entries, else append " " to skip the maker key.
+    if (delim_pos == (int)(keys[0].length() - params.delim.length()))
+      keys[0].append("\xff");
+    else
+      keys[0].append(" ");
+  }
+
   rc = store->next_query_by_name(bucket_index_iname, keys, vals, params.prefix,
                                                                  params.delim);
   if (rc < 0) {
@@ -964,7 +977,7 @@ int MotrBucket::list(const DoutPrefixProvider *dpp, ListParams& params, int max,
   if (rc == max) {
     // One extra key is successfully fetched.
     results.is_truncated = true;
-    results.next_marker = keys[max - 2] + " ";
+    results.next_marker = keys[max - 2];
     rc--;
   } else {
     results.is_truncated = false;
