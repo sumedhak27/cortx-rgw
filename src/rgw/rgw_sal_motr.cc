@@ -3643,8 +3643,7 @@ int MotrStore::next_query_by_name(string idx_name,
       ++k;
     }
 
-    int keys_left = val_out.size() - (i+k);  // i+k gives next index.
-    if (rc < (int)nr_kvp || keys_left <= 0)  // No more keys to fetch
+    if (rc < (int)nr_kvp) // there are no more keys to fetch
       break;
 
     string next_key;
@@ -3653,12 +3652,14 @@ int MotrStore::next_query_by_name(string idx_name,
     else
       next_key = key_out[i + k - 1] + " ";
     ldout(cctx, 0) << "do_idx_next_op(): next_key=" << next_key << dendl;
+    keys[0].assign(next_key.begin(), next_key.end());
+
+    int keys_left = val_out.size() - (i + k);  // i + k gives next index.
     // Resizing keys & vals vector when `keys_left < batch size`.
-    if(keys_left < (int)nr_kvp) {
+    if (keys_left < (int)nr_kvp) {
       keys.resize(keys_left);
       vals.resize(keys_left);
     }
-    keys[0].assign(next_key.begin(), next_key.end());
   }
 
 out:
