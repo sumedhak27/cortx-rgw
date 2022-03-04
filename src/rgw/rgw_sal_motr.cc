@@ -938,13 +938,16 @@ std::unique_ptr<Object> MotrBucket::get_object(const rgw_obj_key& k)
 int MotrBucket::list(const DoutPrefixProvider *dpp, ListParams& params, int max, ListResults& results, optional_yield y)
 {
   int rc;
+  if (max <= 0)  // Return an emtpy response.
+    return 0;
+  max++;  // Fetch an extra key if available to ensure presence of next obj.
   vector<string> keys(max);
   vector<bufferlist> vals(max);
 
   ldpp_dout(dpp, 20) << "bucket=" << info.bucket.name
                     << " prefix=" << params.prefix
                     << " marker=" << params.marker
-                    << " max=" << max << dendl;
+                    << " max=" << max - 1 << dendl;
 
   // Retrieve all `max` number of pairs.
   string bucket_index_iname = "motr.rgw.bucket.index." + info.bucket.name;
@@ -955,6 +958,16 @@ int MotrBucket::list(const DoutPrefixProvider *dpp, ListParams& params, int max,
   if (rc < 0) {
     ldpp_dout(dpp, 0) << "ERROR: NEXT query failed. " << rc << dendl;
     return rc;
+  }
+
+  // Check if an extra key was fetched or not
+  if (rc == max) {
+    // One extra key is successfully fetched.
+    results.is_truncated = true;
+    results.next_marker = keys[max - 2] + " ";
+    rc--;
+  } else {
+    results.is_truncated = false;
   }
 
   // Process the returned pairs to add into ListResults.
@@ -969,13 +982,6 @@ int MotrBucket::list(const DoutPrefixProvider *dpp, ListParams& params, int max,
       if (params.list_versions || ent.is_visible())
         results.objs.emplace_back(std::move(ent));
     }
-  }
-
-  if (i == max) {
-    results.is_truncated = true;
-    results.next_marker = keys[max - 1] + " ";
-  } else {
-    results.is_truncated = false;
   }
 
   return 0;
