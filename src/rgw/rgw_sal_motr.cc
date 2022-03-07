@@ -938,7 +938,7 @@ std::unique_ptr<Object> MotrBucket::get_object(const rgw_obj_key& k)
 int MotrBucket::list(const DoutPrefixProvider *dpp, ListParams& params, int max, ListResults& results, optional_yield y)
 {
   int rc;
-  if (max <= 0)  // Return an emtpy response.
+  if (max == 0)  // Return an emtpy response.
     return 0;
   max++;  // Fetch an extra key if available to ensure presence of next obj.
   vector<string> keys(max);
