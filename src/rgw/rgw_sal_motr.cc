@@ -906,6 +906,26 @@ int MotrBucket::read_stats(const DoutPrefixProvider *dpp, int shard_id,
     std::map<RGWObjCategory, RGWStorageStats>& stats,
     std::string *max_marker, bool *syncstopped)
 {
+  std::string user_stats_iname = "motr.rgw.user.stats." + info.owner.to_str();
+  bufferlist bl;
+  int rc = this->store->do_idx_op_by_name(user_stats_iname,
+                                  M0_IC_GET, info.bucket.get_key(), bl);
+  if (rc < 0) {
+    ldpp_dout(dpp, 20) << __func__ << ": failed to get the bucket stats for bucket = "
+                       << info.bucket.get_key() << dendl;
+    return rc;
+  }
+
+  rgw_bucket_dir_header bkt_header;
+  ceph::buffer::list::const_iterator bitr = bl.begin();
+  bkt_header.decode(bitr);
+  for(const auto& [category, bkt_stat]: bkt_header.stats) {
+    RGWStorageStats& s = stats[category];
+    s.num_objects = bkt_stat.num_entries;
+    s.size = bkt_stat.total_size;
+    s.size_rounded = bkt_stat.total_size_rounded;
+    s.size_utilized = bkt_stat.actual_size;
+  }
   return 0;
 }
 
