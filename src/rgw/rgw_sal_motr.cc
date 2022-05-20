@@ -103,6 +103,14 @@ std::string base62_encode(uint64_t value, size_t pad)
   return ret;
 }
 
+inline std::string get_bucket_name(const std::string& tenant,  const std::string& bucket)
+{
+  if (tenant != "")
+    return tenant + "$" + bucket;
+  else
+    return bucket;
+}
+
 void MotrMetaCache::invalid(const DoutPrefixProvider *dpp,
                            const string& name)
 {
@@ -316,13 +324,36 @@ int MotrUser::create_bucket(const DoutPrefixProvider* dpp,
     ret = mbucket->put_info(dpp, true, ceph::real_time())? :
           mbucket->create_bucket_index() ? :
           mbucket->create_multipart_indices();
-    if (ret < 0)
+    if (ret < 0) {
       ldpp_dout(dpp, 0) << __func__ << ": ERROR: failed to create bucket indices! " << ret << dendl;
+      return ret;
+    }
 
-     // Insert the bucket entry into the user info index.
-     ret = mbucket->link_user(dpp, this, y);
-     if (ret < 0)
-       ldpp_dout(dpp, 0) << __func__ << ": ERROR: failed to add bucket entry! " << ret << dendl;
+    // Insert the bucket entry into the user info index.
+    ret = mbucket->link_user(dpp, this, y);
+    if (ret < 0) {
+      ldpp_dout(dpp, 0) << __func__ << ": ERROR: failed to add bucket entry! " << ret << dendl;
+      return ret;
+    }
+
+    // Add bucket entry in user stats index table.
+    std::string user_stats_iname = "motr.rgw.user.stats." + info.owner.to_str();
+    bufferlist blst;
+    rgw_bucket_dir_header bkt_header;
+    bkt_header.encode(blst);
+    std::string bkt_name = get_bucket_name(b.tenant, b.name);
+    ret = store->do_idx_op_by_name(user_stats_iname,
+                              M0_IC_PUT, bkt_name, blst);
+
+    if (ret != 0) {
+      ldpp_dout(dpp, 20) << __func__ << ": Failed to add the stats entry "
+                         << "for the bucket = " << bkt_name
+                         << ", ret = " << ret << dendl;
+      return ret;
+    }
+    
+    ldpp_dout(dpp, 20) << __func__ << ": Updated the stats successfully for "
+                       << "the bucket = " << bkt_name << dendl; 
   } else {
     return -EEXIST;
     // bucket->set_version(ep_objv);
@@ -446,6 +477,12 @@ int MotrUser::create_user_info_idx()
   return store->create_motr_idx_by_name(user_info_iname);
 }
 
+int inline MotrUser::create_user_stats_idx()
+{
+  string user_stats_iname = "motr.rgw.user.stats." + info.user_id.to_str();
+  return store->create_motr_idx_by_name(user_stats_iname);
+}
+
 int MotrUser::merge_and_store_attrs(const DoutPrefixProvider* dpp, Attrs& new_attrs, optional_yield y)
 {
   for (auto& it : new_attrs)
@@ -548,6 +585,15 @@ int MotrUser::store_user(const DoutPrefixProvider* dpp,
     goto out;
   }
 
+  // Create user stats index to store stats for
+  // all the buckets belonging to a user.
+  rc = create_user_stats_idx();
+  if (rc < 0 && rc != -EEXIST) {
+    ldpp_dout(dpp, 0) << __func__
+      << "Failed to create user stats index: rc = " << rc << dendl;
+    goto out;
+  }
+
   // Put the user info into cache.
   rc = store->get_user_cache()->put(dpp, info.user_id.to_str(), bl);
 
@@ -595,6 +641,11 @@ int MotrUser::remove_user(const DoutPrefixProvider* dpp, optional_yield y)
   store->delete_motr_idx_by_name(user_info_iname);
   ldpp_dout(dpp, 10) << __func__ << ": deleted user info index - " << user_info_iname << dendl;
 
+  // Delete user stats index
+  string user_stats_iname = "motr.rgw.user.stats." + info.user_id.to_str();
+  store->delete_motr_idx_by_name(user_stats_iname);
+  ldpp_dout(dpp, 10) << "Deleted user stats index - " << user_stats_iname << dendl;
+
   // Delete user from user index
   rc = store->do_idx_op_by_name(RGW_MOTR_USERS_IDX_NAME,
                            M0_IC_DEL, info.user_id.to_str(), bl);
@@ -614,13 +665,6 @@ int MotrUser::remove_user(const DoutPrefixProvider* dpp, optional_yield y)
   return 0;
 }
 
-static std::string get_bucket_name(const std::string& tenant,  const std::string& bucket)
-{
-  if (tenant != "")
-    return tenant + "$" + bucket;
-  else
-    return bucket;
-}
 
 int MotrBucket::remove_bucket(const DoutPrefixProvider *dpp, bool delete_children, bool forward_to_master, req_info* req_info, optional_yield y)
 {
@@ -684,11 +728,21 @@ int MotrBucket::remove_bucket(const DoutPrefixProvider *dpp, bool delete_childre
     return ret;
   }
 
-  // 4. Sync user stats.
-  ret = this->sync_user_stats(dpp, y);
-  if (ret < 0) {
-     ldout(store->ctx(), 1) << __func__ << ": WARNING: failed sync user stats before bucket delete. ret=" <<  ret << dendl;
+  // 4. Delete the bucket stats.
+  bufferlist blst;
+  std::string user_stats_iname = "motr.rgw.user.stats." + info.owner.to_str();
+
+  ret = store->do_idx_op_by_name(user_stats_iname,
+                            M0_IC_DEL, tenant_bkt_name, blst);
+
+  if (ret != 0) {
+    ldpp_dout(dpp, 20) << __func__ << ": Failed to delete the stats entry "
+                      << "for the bucket = " << tenant_bkt_name
+                      << ", ret = " << ret << dendl;
   }
+  else
+    ldpp_dout(dpp, 20) << __func__ << ": Deleted the stats successfully for the "
+                      << " bucket = " << tenant_bkt_name << dendl;
 
   // 5. Remove the bucket from user info index. (unlink user)
   ret = this->unlink_user(dpp, owner, y);
@@ -2673,7 +2727,7 @@ int MotrAtomicWriter::complete(size_t accounted_size, const std::string& etag,
   bufferlist bl;
   rgw_bucket_dir_entry ent;
 
-  // Set rgw_bucet_dir_entry. Some of the member of this structure may not
+  // Set rgw_bucket_dir_entry. Some of the member of this structure may not
   // apply to motr. For example the storage_class.
   //
   // Checkout AtomicObjectProcessor::complete() in rgw_putobj_processor.cc
