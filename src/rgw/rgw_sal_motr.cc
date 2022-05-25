@@ -347,13 +347,12 @@ int MotrUser::create_bucket(const DoutPrefixProvider* dpp,
 
     if (ret != 0) {
       ldpp_dout(dpp, 20) << __func__ << ": Failed to add the stats entry "
-                         << "for the bucket = " << bkt_name
-                         << ", ret = " << ret << dendl;
+        << "for the bucket = " << bkt_name << ", ret = " << ret << dendl;
       return ret;
     }
     
-    ldpp_dout(dpp, 20) << __func__ << ": Updated the stats successfully for "
-                       << "the bucket = " << bkt_name << dendl; 
+    ldpp_dout(dpp, 20) << __func__ << ": Added an empty stats entry for "
+        << "the bucket = " << bkt_name << ", ret = " << ret << dendl; 
   } else {
     return -EEXIST;
     // bucket->set_version(ep_objv);
@@ -923,7 +922,7 @@ int MotrBucket::read_stats(const DoutPrefixProvider *dpp, int shard_id,
     RGWStorageStats& s = stats[category];
     s.num_objects = bkt_stat.num_entries;
     s.size = bkt_stat.total_size;
-    s.size_rounded = bkt_stat.total_size_rounded;
+    s.size_rounded = rgw_rounded_kb(s.size) * 1024;
     s.size_utilized = bkt_stat.actual_size;
   }
   return 0;
@@ -1784,6 +1783,40 @@ int MotrObject::MotrDeleteOp::delete_obj(const DoutPrefixProvider* dpp, optional
     return rc;
   }
 
+  // Subtract the object_size & count from bucket stats entry in user stats index table.
+  bl.clear();
+  std::string user_stats_iname = "motr.rgw.user.stats." +
+                                 params.bucket_owner.get_id().to_str();
+  rgw_bucket_dir_header bkt_header;
+  rc = source->store->do_idx_op_by_name(user_stats_iname,
+                            M0_IC_GET, tenant_bkt_name, bl);
+  if (rc != 0) {
+    ldpp_dout(dpp, 20) << __func__ << ": Failed to get the bucket header."
+      << " bucket = " << tenant_bkt_name << ", ret = " << rc << dendl;
+    return rc;
+  }
+  
+  bufferlist::const_iterator bitr = bl.begin();
+  bkt_header.decode(bitr);
+  rgw_bucket_category_stats& bkt_stat = bkt_header.stats[RGWObjCategory::Main];
+  bkt_stat.num_entries--;
+  bkt_stat.total_size -= ent.meta.size;
+  bkt_stat.actual_size -= ent.meta.size;
+
+  bl.clear();
+  bkt_header.encode(bl);
+  rc = source->store->do_idx_op_by_name(user_stats_iname,
+                            M0_IC_PUT, tenant_bkt_name, bl);
+  if (rc != 0) {
+    ldpp_dout(dpp, 20) << __func__ << ": Failed stats substraction for the "
+      << "bucket/obj = " << tenant_bkt_name << "/" << source->get_name()
+      << ", rc = " << rc << dendl;
+    return rc;
+  }
+  ldpp_dout(dpp, 20) << __func__ << ": Stats subtracted successfully for the "
+      << "bucket/obj = " << tenant_bkt_name << "/" << source->get_name()
+      << ", rc = " << rc << dendl;
+
   //result.delete_marker = parent_op.result.delete_marker;
   //result.version_id = parent_op.result.version_id;
   return 0;
@@ -1883,6 +1916,7 @@ int MotrAtomicWriter::prepare(optional_yield y)
   if (rc == 0) {
     ldpp_dout(dpp, 20) << __func__ << ": object exists." << dendl;
   }
+  old_obj.set_obj_size(ent.meta.size);
 
   rc = m0_bufvec_empty_alloc(&buf, MAX_BUFVEC_NR) ?:
            m0_bufvec_alloc(&attr, MAX_BUFVEC_NR, 1) ?:
@@ -2815,19 +2849,54 @@ int MotrAtomicWriter::complete(size_t accounted_size, const std::string& etag,
   string bucket_index_iname = "motr.rgw.bucket.index." + tenant_bkt_name;
   rc = store->do_idx_op_by_name(bucket_index_iname,
                                 M0_IC_PUT, obj.get_key().to_str(), bl);
+
   if (rc != 0) {
-    ldpp_dout(dpp, 0) <<__func__<< ": index operation failed, rc = "<< rc << dendl;
+    ldpp_dout(dpp, 0) << __func__ << ": index operation failed, rc = "<< rc << dendl;
+    obj.delete_mobj(dpp);
     return rc;
   }
 
   store->get_obj_meta_cache()->put(dpp, obj.get_key().to_str(), bl);
 
-  if (rc == 0 && !info.versioning_enabled())
-      // Delete old object data if exists.
-      old_obj.delete_mobj(dpp);
+  // update bucket stats in user stats index.
+  std::string user_stats_iname = "motr.rgw.user.stats." + owner.to_str();
+  bl.clear();
+  rgw_bucket_dir_header bkt_header;
+  rc = store->do_idx_op_by_name(user_stats_iname,
+                            M0_IC_GET, tenant_bkt_name, bl);
+  if (rc != 0) {
+    ldpp_dout(dpp, 20) << __func__ << ": Failed to get the bucket header."
+      << " bucket = " << tenant_bkt_name << ", ret = " << rc << dendl;
+    return rc;
+  }
+  
+  bufferlist::const_iterator bitr = bl.begin();
+  bkt_header.decode(bitr);
+  rgw_bucket_category_stats& bkt_stat = bkt_header.stats[RGWObjCategory::Main];
+  bkt_stat.num_entries++;
+  bkt_stat.total_size += total_data_size;
+  bkt_stat.actual_size += total_data_size;
 
-  if (rc != 0)
-    obj.delete_mobj(dpp);
+  if (!info.versioning_enabled()) {
+      // Delete old object data if exists.
+      if (old_obj.get_obj_size())  {
+        bkt_stat.total_size -= old_obj.get_obj_size();
+        bkt_stat.actual_size -= old_obj.get_obj_size();
+        bkt_stat.num_entries--;
+      }
+      old_obj.delete_mobj(dpp);
+  }
+  bl.clear();
+  bkt_header.encode(bl);
+  rc = store->do_idx_op_by_name(user_stats_iname,
+                            M0_IC_PUT, tenant_bkt_name, bl);
+  if (rc != 0) {
+    ldpp_dout(dpp, 20) << __func__ << ": Failed stats additon for the bucket/obj = "
+      << tenant_bkt_name << "/" << obj.get_name() << ", rc = " << rc << dendl;
+    return rc;
+  }
+  ldpp_dout(dpp, 20) << __func__ << ": Stats added successfully for the bucket/obj = "
+    << tenant_bkt_name << "/" << obj.get_name() << ", rc = " << rc << dendl;
 
   // TODO: We need to handle the object leak caused by parallel object upload by
   // making use of background gc, which is currently not enabled for motr.
