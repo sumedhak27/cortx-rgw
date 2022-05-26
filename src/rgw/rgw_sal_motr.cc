@@ -1895,12 +1895,15 @@ MotrAtomicWriter::MotrAtomicWriter(const DoutPrefixProvider *dpp,
           const std::string& _unique_tag) :
         Writer(dpp, y),
         store(_store),
-              owner(_owner),
-              ptail_placement_rule(_ptail_placement_rule),
-              olh_epoch(_olh_epoch),
-              unique_tag(_unique_tag),
-              obj(_store, _head_obj->get_key(), _head_obj->get_bucket()),
-              old_obj(_store, _head_obj->get_key(), _head_obj->get_bucket()) {}
+        owner(_owner),
+        ptail_placement_rule(_ptail_placement_rule),
+        olh_epoch(_olh_epoch),
+        unique_tag(_unique_tag),
+        obj(_store, _head_obj->get_key(), _head_obj->get_bucket()),
+        old_obj(_store, _head_obj->get_key(), _head_obj->get_bucket())
+{
+  old_obj_exist = false;
+}
 
 static const unsigned MAX_BUFVEC_NR = 256;
 
@@ -1915,8 +1918,9 @@ int MotrAtomicWriter::prepare(optional_yield y)
   int rc = old_obj.get_bucket_dir_ent(dpp, ent);
   if (rc == 0) {
     ldpp_dout(dpp, 20) << __func__ << ": object exists." << dendl;
+    old_obj.set_obj_size(ent.meta.size);
+    old_obj_exist = true;
   }
-  old_obj.set_obj_size(ent.meta.size);
 
   rc = m0_bufvec_empty_alloc(&buf, MAX_BUFVEC_NR) ?:
            m0_bufvec_alloc(&attr, MAX_BUFVEC_NR, 1) ?:
@@ -2873,19 +2877,15 @@ int MotrAtomicWriter::complete(size_t accounted_size, const std::string& etag,
   bufferlist::const_iterator bitr = bl.begin();
   bkt_header.decode(bitr);
   rgw_bucket_category_stats& bkt_stat = bkt_header.stats[RGWObjCategory::Main];
-  bkt_stat.num_entries++;
-  bkt_stat.total_size += total_data_size;
-  bkt_stat.actual_size += total_data_size;
+  bkt_stat.total_size += total_data_size - old_obj.get_obj_size();
+  bkt_stat.actual_size += total_data_size - old_obj.get_obj_size();
 
-  if (!info.versioning_enabled()) {
-      // Delete old object data if exists.
-      if (old_obj.get_obj_size())  {
-        bkt_stat.total_size -= old_obj.get_obj_size();
-        bkt_stat.actual_size -= old_obj.get_obj_size();
-        bkt_stat.num_entries--;
-      }
-      old_obj.delete_mobj(dpp);
-  }
+  // Delete old object data if exists and versioning is disabled.
+  if (old_obj_exist && !info.versioning_enabled())
+    old_obj.delete_mobj(dpp);
+  else
+    bkt_stat.num_entries++;
+
   bl.clear();
   bkt_header.encode(bl);
   rc = store->do_idx_op_by_name(user_stats_iname,
