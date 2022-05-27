@@ -2877,12 +2877,15 @@ int MotrAtomicWriter::complete(size_t accounted_size, const std::string& etag,
   bufferlist::const_iterator bitr = bl.begin();
   bkt_header.decode(bitr);
   rgw_bucket_category_stats& bkt_stat = bkt_header.stats[RGWObjCategory::Main];
-  bkt_stat.total_size += total_data_size - old_obj.get_obj_size();
-  bkt_stat.actual_size += total_data_size - old_obj.get_obj_size();
+  bkt_stat.total_size += total_data_size;
+  bkt_stat.actual_size += total_data_size;
 
   // Delete old object data if exists and versioning is disabled.
-  if (old_obj_exist && !info.versioning_enabled())
+  if (old_obj_exist && !info.versioning_enabled()) {
+    bkt_stat.total_size -= old_obj.get_obj_size();
+    bkt_stat.actual_size -= old_obj.get_obj_size();
     old_obj.delete_mobj(dpp);
+  }
   else
     bkt_stat.num_entries++;
 
