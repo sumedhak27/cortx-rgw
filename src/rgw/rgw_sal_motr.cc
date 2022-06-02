@@ -169,6 +169,37 @@ inline std::string get_bucket_name(const std::string& tenant,  const std::string
     return bucket;
 }
 
+int static update_bucket_stats(const DoutPrefixProvider *dpp, MotrStore *store,
+                               std::string owner, std::string bucket_name,
+                               uint64_t size, uint64_t actual_size,
+                               uint64_t num_objects = 1, bool add = true)
+{
+  uint64_t multiplier = add ? 1 : -1;
+  bufferlist bl;
+  std::string user_stats_iname = "motr.rgw.user.stats." + owner;
+  rgw_bucket_dir_header bkt_header;
+  int rc = store->do_idx_op_by_name(user_stats_iname,
+                            M0_IC_GET, bucket_name, bl);
+  if (rc != 0) {
+    ldpp_dout(dpp, 20) << __func__ << ": Failed to get the bucket header."
+      << " bucket = " << bucket_name << ", ret = " << rc << dendl;
+    return rc;
+  }
+  
+  bufferlist::const_iterator bitr = bl.begin();
+  bkt_header.decode(bitr);
+  rgw_bucket_category_stats& bkt_stat = bkt_header.stats[RGWObjCategory::Main];
+  bkt_stat.num_entries += multiplier * num_objects;
+  bkt_stat.total_size += multiplier * size;
+  bkt_stat.actual_size += multiplier * actual_size;
+
+  bl.clear();
+  bkt_header.encode(bl);
+  rc = store->do_idx_op_by_name(user_stats_iname,
+                            M0_IC_PUT, bucket_name, bl);
+  return rc;
+}
+
 void MotrMetaCache::invalid(const DoutPrefixProvider *dpp,
                            const string& name)
 {
@@ -2055,6 +2086,23 @@ int MotrObject::MotrDeleteOp::delete_obj(const DoutPrefixProvider* dpp, optional
     }
     // delete null reference key.
     del_null_ref_key = true;
+      
+    // Stats update for unversioned simple object
+    if (ent.meta.category != RGWObjCategory::MultiMeta) {
+      rc = update_bucket_stats(dpp, source->store, 
+                                params.bucket_owner.get_id().to_str(), tenant_bkt_name,
+                                ent.meta.size, ent.meta.size, 1, false);
+      if (rc != 0) {
+        ldpp_dout(dpp, 20) << __func__ << ": Failed stats substraction for the "
+          << "bucket/obj = " << tenant_bkt_name << "/" << source->get_name()
+          << ", rc = " << rc << dendl;
+        return rc;
+      }
+      ldpp_dout(dpp, 20) << __func__ << ": Stats subtracted successfully for the "
+          << "bucket/obj = " << tenant_bkt_name << "/" << source->get_name()
+          << ", rc = " << rc << dendl;
+
+    }
   }
   if(del_null_ref_key)
   {
@@ -2069,39 +2117,7 @@ int MotrObject::MotrDeleteOp::delete_obj(const DoutPrefixProvider* dpp, optional
       }
   }
 
-  // Subtract the object_size & count from bucket stats entry in user stats index table.
-  bl.clear();
-  std::string user_stats_iname = "motr.rgw.user.stats." +
-                                 params.bucket_owner.get_id().to_str();
-  rgw_bucket_dir_header bkt_header;
-  rc = source->store->do_idx_op_by_name(user_stats_iname,
-                            M0_IC_GET, tenant_bkt_name, bl);
-  if (rc != 0) {
-    ldpp_dout(dpp, 20) << __func__ << ": Failed to get the bucket header."
-      << " bucket = " << tenant_bkt_name << ", ret = " << rc << dendl;
-    return rc;
-  }
-  
-  bufferlist::const_iterator bitr = bl.begin();
-  bkt_header.decode(bitr);
-  rgw_bucket_category_stats& bkt_stat = bkt_header.stats[RGWObjCategory::Main];
-  bkt_stat.num_entries--;
-  bkt_stat.total_size -= ent.meta.size;
-  bkt_stat.actual_size -= ent.meta.size;
 
-  bl.clear();
-  bkt_header.encode(bl);
-  rc = source->store->do_idx_op_by_name(user_stats_iname,
-                            M0_IC_PUT, tenant_bkt_name, bl);
-  if (rc != 0) {
-    ldpp_dout(dpp, 20) << __func__ << ": Failed stats substraction for the "
-      << "bucket/obj = " << tenant_bkt_name << "/" << source->get_name()
-      << ", rc = " << rc << dendl;
-    return rc;
-  }
-  ldpp_dout(dpp, 20) << __func__ << ": Stats subtracted successfully for the "
-      << "bucket/obj = " << tenant_bkt_name << "/" << source->get_name()
-      << ", rc = " << rc << dendl;
 
   //result.delete_marker = parent_op.result.delete_marker;
   //result.version_id = parent_op.result.version_id;
@@ -3475,28 +3491,8 @@ int MotrAtomicWriter::complete(size_t accounted_size, const std::string& etag,
   store->get_obj_meta_cache()->put(dpp, obj.get_key().to_str(), bl);
 
   // update bucket stats in user stats index.
-  std::string user_stats_iname = "motr.rgw.user.stats." + owner.to_str();
-  bl.clear();
-  rgw_bucket_dir_header bkt_header;
-  rc = store->do_idx_op_by_name(user_stats_iname,
-                            M0_IC_GET, tenant_bkt_name, bl);
-  if (rc != 0) {
-    ldpp_dout(dpp, 20) << __func__ << ": Failed to get the bucket header."
-      << " bucket = " << tenant_bkt_name << ", ret = " << rc << dendl;
-    return rc;
-  }
-  
-  bufferlist::const_iterator bitr = bl.begin();
-  bkt_header.decode(bitr);
-  rgw_bucket_category_stats& bkt_stat = bkt_header.stats[RGWObjCategory::Main];
-  bkt_stat.num_entries++;
-  bkt_stat.total_size += total_data_size;
-  bkt_stat.actual_size += total_data_size;
-
-  bl.clear();
-  bkt_header.encode(bl);
-  rc = store->do_idx_op_by_name(user_stats_iname,
-                            M0_IC_PUT, tenant_bkt_name, bl);
+  rc = update_bucket_stats(dpp, store, owner.to_str(), tenant_bkt_name,
+                           total_data_size, total_data_size);
   if (rc != 0) {
     ldpp_dout(dpp, 20) << __func__ << ": Failed stats additon for the bucket/obj = "
       << tenant_bkt_name << "/" << obj.get_name() << ", rc = " << rc << dendl;
