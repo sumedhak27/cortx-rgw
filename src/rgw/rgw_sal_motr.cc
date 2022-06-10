@@ -2114,8 +2114,10 @@ int MotrObject::remove_mobj_and_index_entry(
   }
 
   // Subtract object size & count from the bucket stats.
+  if (ent.is_delete_marker())
+    return rc;
   rc = update_bucket_stats(dpp, this->store, ent.meta.owner, bucket_name,
-                           ent.meta.size, ent.meta.size, 1, false);
+                            ent.meta.size, ent.meta.size, 1, false);
   if (rc != 0) {
     ldpp_dout(dpp, 20) << __func__ << ": Failed stats substraction for the "
       << "bucket/obj = " << bucket_name << "/" << delete_key
