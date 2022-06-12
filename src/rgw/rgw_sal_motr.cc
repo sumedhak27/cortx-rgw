@@ -1051,8 +1051,7 @@ int MotrBucket::read_stats(const DoutPrefixProvider *dpp, int shard_id,
     RGWStorageStats& s = stats[category];
     s.num_objects = bkt_stat.num_entries;
     s.size = bkt_stat.total_size;
-    s.size_rounded = rgw_rounded_kb(s.size) * 1024;
-    s.size_utilized = bkt_stat.actual_size;
+    s.size_rounded = bkt_stat.actual_size;
   }
   return 0;
 }
@@ -2093,13 +2092,32 @@ int MotrObject::remove_mobj_and_index_entry(
     std::string bucket_name) {
   int rc;
   bufferlist bl;
+  uint64_t size_rounded = 0;
+
   // handling empty size object case
-  if (ent.meta.size !=0) {
+  if (ent.meta.size != 0) {
     if (ent.meta.category == RGWObjCategory::MultiMeta) {
       this->set_category(RGWObjCategory::MultiMeta);
-      rc = this->delete_part_objs(dpp);
-    } else
+      rc = this->delete_part_objs(dpp, &size_rounded);
+    } else {
+      // Handling Simple Object Deletion
+      // Open the object if not already open.
+      // No need to close mobj as delete_mobj will open it again
+      if (mobj == nullptr) {
+        rc = this->open_mobj(dpp);
+        if (rc < 0) {
+          ADDB(RGW_ADDB_REQUEST_ID, addb_logger.get_id(),
+	        RGW_ADDB_FUNC_DELETE_MOBJ,
+	        RGW_ADDB_PHASE_ERROR);
+          return rc;
+        }
+      }
+      uint64_t lid = M0_OBJ_LAYOUT_ID(mobj->ob_attr.oa_layout_id);
+      uint64_t unit_sz = m0_obj_layout_id_to_unit_size(lid);
+      size_rounded = roundup(ent.meta.size, unit_sz);
+
       rc = this->delete_mobj(dpp);
+    }
     if (rc < 0) {
       ldpp_dout(dpp, 0) << "Failed to delete the object " << delete_key  <<" from Motr. " << dendl;
       return rc;
@@ -2117,7 +2135,7 @@ int MotrObject::remove_mobj_and_index_entry(
   if (ent.is_delete_marker())
     return rc;
   rc = update_bucket_stats(dpp, this->store, ent.meta.owner, bucket_name,
-                            ent.meta.size, ent.meta.size, 1, false);
+                           ent.meta.size, size_rounded, 1, false);
   if (rc != 0) {
     ldpp_dout(dpp, 20) << __func__ << ": Failed stats substraction for the "
       << "bucket/obj = " << bucket_name << "/" << delete_key
@@ -3023,13 +3041,13 @@ int MotrObject::open_part_objs(const DoutPrefixProvider* dpp,
   return 0;
 }
 
-int MotrObject::delete_part_objs(const DoutPrefixProvider* dpp)
-{
+int MotrObject::delete_part_objs(const DoutPrefixProvider* dpp,
+                                 uint64_t* size_rounded) {
   string version_id = this->get_instance();
   std::unique_ptr<rgw::sal::MultipartUpload> upload;
   upload = this->get_bucket()->get_multipart_upload(this->get_name(), string());
   std::unique_ptr<rgw::sal::MotrMultipartUpload> mupload(static_cast<rgw::sal::MotrMultipartUpload *>(upload.release()));
-  return mupload->delete_parts(dpp, version_id);
+  return mupload->delete_parts(dpp, version_id, size_rounded);
 }
 
 int MotrObject::read_multipart_obj(const DoutPrefixProvider* dpp,
@@ -3371,6 +3389,9 @@ int MotrAtomicWriter::complete(size_t accounted_size, const std::string& etag,
   ent.meta.etag = etag;
   ent.meta.owner = owner.to_str();
   ent.meta.owner_display_name = obj.get_bucket()->get_owner()->get_display_name();
+  uint64_t lid = M0_OBJ_LAYOUT_ID(obj.meta.layout_id);
+  uint64_t unit_sz = m0_obj_layout_id_to_unit_size(lid);
+  uint64_t size_rounded = roundup(ent.meta.size, unit_sz);
   RGWBucketInfo &info = obj.get_bucket()->get_info();
 
   // Set version and current flag in case of both versioning enabled and suspended case.
@@ -3458,7 +3479,7 @@ int MotrAtomicWriter::complete(size_t accounted_size, const std::string& etag,
 
   // Add object size and count in bucket stats entry.
   rc = update_bucket_stats(dpp, store, owner.to_str(), tenant_bkt_name,
-                           total_data_size, total_data_size);
+                           total_data_size, size_rounded);
   if (rc != 0) {
     ldpp_dout(dpp, 20) << __func__ << ": Failed stats additon for the bucket/obj = "
       << tenant_bkt_name << "/" << obj.get_name() << ", rc = " << rc << dendl;
@@ -3472,12 +3493,12 @@ int MotrAtomicWriter::complete(size_t accounted_size, const std::string& etag,
   return rc;
 }
 
-int MotrMultipartUpload::delete_parts(const DoutPrefixProvider *dpp, std::string version_id)
+int MotrMultipartUpload::delete_parts(const DoutPrefixProvider *dpp, std::string version_id, uint64_t* size_rounded)
 {
   int rc;
   int max_parts = 1000;
   int total_parts_fetched = 0;
-  uint64_t total_size = 0;
+  uint64_t total_size = 0, total_size_rounded = 0;
   int marker = 0;
   bool truncated = false;
 
@@ -3499,6 +3520,7 @@ int MotrMultipartUpload::delete_parts(const DoutPrefixProvider *dpp, std::string
       MotrMultipartPart *mmpart = static_cast<MotrMultipartPart *>(mpart);
       uint32_t part_num = mmpart->get_num();
       total_size += mmpart->get_size();
+      total_size_rounded += mmpart->get_size_rounded();
 
       // Delete the part object. Note that the part object is  not
       // inserted into bucket index, only the corresponding motr object
@@ -3546,12 +3568,14 @@ int MotrMultipartUpload::delete_parts(const DoutPrefixProvider *dpp, std::string
       return rc;
     }
   }
+  if (size_rounded != nullptr)
+    *size_rounded = total_size_rounded;
 
   if (get_upload_id().length()) {
     // Subtract size & count of all the parts if multipart is not completed.
     rc = update_bucket_stats(dpp, store,
                              bucket->get_owner()->get_id().to_str(), tenant_bkt_name,
-                             total_size, total_size, total_parts_fetched, false);
+                             total_size, total_size_rounded, total_parts_fetched, false);
     if (rc != 0) {
       ldpp_dout(dpp, 20) << __func__ << ": Failed stats substraction for the "
         << "bucket/obj = " << tenant_bkt_name << "/" << mp_obj.get_key()
@@ -4233,9 +4257,13 @@ int MotrMultipartWriter::complete(size_t accounted_size, const std::string& etag
   info.num = part_num;
   info.etag = etag;
   info.size = actual_part_size;
+  uint64_t lid = M0_OBJ_LAYOUT_ID(part_obj->meta.layout_id);
+  uint64_t unit_sz = m0_obj_layout_id_to_unit_size(lid);
+  uint64_t size_rounded = roundup(info.size, unit_sz);
+  info.size_rounded = size_rounded;
   info.accounted_size = accounted_size;
   info.modified = real_clock::now();
-  uint64_t old_part_size = 0;
+  uint64_t old_part_size = 0, old_part_size_rounded = 0;
   bool old_part_exist = false;
 
   bool compressed;
@@ -4285,6 +4313,7 @@ int MotrMultipartWriter::complete(size_t accounted_size, const std::string& etag
     rgw::sal::MotrObject *old_mobj = static_cast<rgw::sal::MotrObject *>(old_part_obj.get());
     ldpp_dout(dpp, 20) << __func__ << ": Old part with oid [" << oid_str << "] exists" << dendl;
     old_part_size = old_part_info.accounted_size;
+    old_part_size_rounded = old_part_info.size_rounded;
     old_part_exist = true;
     // Delete old object
     rc = old_mobj->delete_mobj(dpp);
@@ -4306,7 +4335,7 @@ int MotrMultipartWriter::complete(size_t accounted_size, const std::string& etag
                            head_obj->get_bucket()->get_owner()->get_id().to_str(),
                            tenant_bkt_name,
                            actual_part_size - old_part_size,
-                           actual_part_size - old_part_size,
+                           size_rounded - old_part_size_rounded,
                            1 - old_part_exist);
   if (rc != 0) {
     ldpp_dout(dpp, 20) << __func__ << ": Failed stats update for the "
