@@ -692,7 +692,7 @@ class MotrObject : public Object {
     int read_multipart_obj(const DoutPrefixProvider* dpp,
                            int64_t off, int64_t end, RGWGetDataCB* cb,
                            std::map<int, std::unique_ptr<MotrObject>>& part_objs);
-    int delete_part_objs(const DoutPrefixProvider* dpp,  u_int64_t* size_rounded);
+    int delete_part_objs(const DoutPrefixProvider* dpp, uint64_t* size_rounded);
     void set_category(RGWObjCategory _category) {category = _category;}
     int get_bucket_dir_ent(const DoutPrefixProvider *dpp, rgw_bucket_dir_entry& ent);
     int fetch_null_obj(const DoutPrefixProvider *dpp, bufferlist& bl);
@@ -914,7 +914,7 @@ public:
 			  const rgw_placement_rule *ptail_placement_rule,
 			  uint64_t part_num,
 			  const std::string& part_num_str) override;
-  int delete_parts(const DoutPrefixProvider *dpp, std::string version_id="", u_int64_t* size_rounded=NULL);
+  int delete_parts(const DoutPrefixProvider *dpp, std::string version_id="", uint64_t* size_rounded = nullptr);
 };
 
 class MotrStore : public Store {

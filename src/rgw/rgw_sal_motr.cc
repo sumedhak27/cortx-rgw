@@ -2092,21 +2092,20 @@ int MotrObject::remove_mobj_and_index_entry(
     std::string bucket_name) {
   int rc;
   bufferlist bl;
-  u_int64_t size_rounded=0;
+  uint64_t size_rounded = 0;
 
   // handling empty size object case
-  if (ent.meta.size !=0) {
+  if (ent.meta.size != 0) {
     if (ent.meta.category == RGWObjCategory::MultiMeta) {
       this->set_category(RGWObjCategory::MultiMeta);
       rc = this->delete_part_objs(dpp, &size_rounded);
-    } else{
+    } else {
       // Handling Simple Object Deletion
-      // Open the object.
-      if (mobj == nullptr)
-      {
+      // Open the object if not already open.
+      // No need to close mobj as delete_mobj will open it again
+      if (mobj == nullptr) {
         rc = this->open_mobj(dpp);
-        if (rc < 0)
-        {
+        if (rc < 0) {
           ADDB(RGW_ADDB_REQUEST_ID, addb_logger.get_id(),
 	        RGW_ADDB_FUNC_DELETE_MOBJ,
 	        RGW_ADDB_PHASE_ERROR);
@@ -2117,11 +2116,12 @@ int MotrObject::remove_mobj_and_index_entry(
       uint64_t unit_sz = m0_obj_layout_id_to_unit_size(lid);
       size_rounded = roundup(ent.meta.size, unit_sz);
 
-      rc = this->delete_mobj(dpp);}
-      if (rc < 0) {
+      rc = this->delete_mobj(dpp);
+    }
+    if (rc < 0) {
       ldpp_dout(dpp, 0) << "Failed to delete the object " << delete_key  <<" from Motr. " << dendl;
       return rc;
-      }
+    }
   }
   rc = this->store->do_idx_op_by_name(bucket_index_iname,
                                       M0_IC_DEL, delete_key, bl);
@@ -3041,8 +3041,8 @@ int MotrObject::open_part_objs(const DoutPrefixProvider* dpp,
   return 0;
 }
 
-int MotrObject::delete_part_objs(const DoutPrefixProvider* dpp, u_int64_t* size_rounded)
-{
+int MotrObject::delete_part_objs(const DoutPrefixProvider* dpp,
+                                 uint64_t* size_rounded) {
   string version_id = this->get_instance();
   std::unique_ptr<rgw::sal::MultipartUpload> upload;
   upload = this->get_bucket()->get_multipart_upload(this->get_name(), string());
@@ -3493,7 +3493,7 @@ int MotrAtomicWriter::complete(size_t accounted_size, const std::string& etag,
   return rc;
 }
 
-int MotrMultipartUpload::delete_parts(const DoutPrefixProvider *dpp, std::string version_id, u_int64_t* size_rounded)
+int MotrMultipartUpload::delete_parts(const DoutPrefixProvider *dpp, std::string version_id, uint64_t* size_rounded)
 {
   int rc;
   int max_parts = 1000;
@@ -3568,7 +3568,7 @@ int MotrMultipartUpload::delete_parts(const DoutPrefixProvider *dpp, std::string
       return rc;
     }
   }
-  if(size_rounded != NULL)
+  if (size_rounded != nullptr)
     *size_rounded = total_size_rounded;
 
   if (get_upload_id().length()) {
