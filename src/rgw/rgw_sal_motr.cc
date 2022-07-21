@@ -1485,7 +1485,7 @@ int MotrStore::initialize(CephContext *cct, const DoutPrefixProvider *dpp) {
   if (use_gc_thread) {
     int rc = create_gc(dpp);
     if (rc != 0)
-      ldpp_dout(dpp, 0) << __func__ << ": Metadata cache init failed " <<
+      ldpp_dout(dpp, 0) << __func__ << ": Failed to Create MotrGC " <<
         "with rc = " << rc << dendl;
   }
   return rc;
@@ -1493,16 +1493,15 @@ int MotrStore::initialize(CephContext *cct, const DoutPrefixProvider *dpp) {
 
 int MotrStore::create_gc(const DoutPrefixProvider *dpp) {
   int ret = 0;
-  // [TODO] Create multiple GC threads as per config
-  gc_worker = std::make_unique<MotrGC>(dpp, this);
-  gc_worker->create("motr_gc");
+  motr_gc->initialize(cctx, this);
+  motr_gc->start_processor();
   return ret;
 }
 
 void MotrStore::stop_gc() {
-  if (gc_worker) {
-    gc_worker->signal_stop();
-    gc_worker->join();
+  if (motr_gc) {
+    motr_gc->stop_processor();
+    motr_gc->finalize();
   }
 }
 

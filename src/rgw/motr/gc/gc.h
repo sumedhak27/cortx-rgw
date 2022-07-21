@@ -20,28 +20,47 @@
 #include "common/Thread.h"
 #include <mutex>
 #include <condition_variable>
+#include <atomic>
 
-class MotrGC : public Thread {
- private: 
-  const DoutPrefixProvider *dpp;
+class MotrGC : public DoutPrefixProvider {
+ private:
+  CephContext *cct;
   rgw::sal::Store *store;
-  std::mutex mtx;
-  std::condition_variable cv;
-  bool stop_signalled = false;
-  uint32_t gc_interval = 60*60;  // default: 24*60*60 sec
-  uint32_t gc_obj_min_wait = 60*60;  // 60*60sec default
+  int max_indices = 0;
+  std::vector<std::string> index_names;
+  std::atomic<bool> down_flag = false;
 
  public:
-  MotrGC(const DoutPrefixProvider *_dpp, rgw::sal::Store* _store) :
-         dpp(_dpp), store(_store) {}
+  class GCWorker : public Thread {
+   private:
+    const DoutPrefixProvider *dpp;
+    CephContext *cct;
+    MotrGC *motr_gc;
+    int worker_id;
+    uint32_t gc_interval = 60*60;  // default: 24*60*60 sec
+    std::mutex lock;
+    std::condition_variable cv;
+   public:
+    GCWorker(const DoutPrefixProvider* _dpp, CephContext *_cct,
+             MotrGC *_motr_gc, int _worker_id)
+      : dpp(_dpp), cct(_cct), motr_gc(_motr_gc), worker_id(_worker_id) {};
 
-  void *entry() override;
+    void *entry() override;
+    void stop();
+  };
+  std::vector<std::unique_ptr<MotrGC::GCWorker>> workers;
 
-  void signal_stop() {
-    std::lock_guard<std::mutex> lk_guard(mtx);
-    stop_signalled = true;
-    cv.notify_all();  
+  MotrGC() : cct(nullptr), store(nullptr) {}
+  ~MotrGC() {
+    stop_processor();
+    finalize();
   }
+
+  void initialize(CephContext *_cct, rgw::sal::Store* _store);
+  void finalize();
+
+  void start_processor();
+  void stop_processor();
 };
 
 #endif

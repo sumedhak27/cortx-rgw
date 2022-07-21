@@ -985,9 +985,7 @@ class MotrStore : public Store {
     MotrMetaCache* user_cache;
     MotrMetaCache* bucket_inst_cache;
 
-    // [TODO] Create vector of gc_workers
-    //        size is input from `rgw_gc_max_concurrent_io`
-    std::unique_ptr<MotrGC> gc_worker;
+    std::unique_ptr<MotrGC> motr_gc;
     bool use_gc_thread;
     bool use_cache;
 
