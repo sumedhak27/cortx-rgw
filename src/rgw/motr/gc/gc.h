@@ -22,6 +22,8 @@
 #include <condition_variable>
 #include <atomic>
 
+static std::string gc_thread_prefix = "gc_thread_";
+
 class MotrGC : public DoutPrefixProvider {
  private:
   CephContext *cct;
@@ -43,24 +45,36 @@ class MotrGC : public DoutPrefixProvider {
    public:
     GCWorker(const DoutPrefixProvider* _dpp, CephContext *_cct,
              MotrGC *_motr_gc, int _worker_id)
-      : dpp(_dpp), cct(_cct), motr_gc(_motr_gc), worker_id(_worker_id) {};
+      : dpp(_dpp),
+        cct(_cct),
+        motr_gc(_motr_gc),
+        worker_id(_worker_id) {};
 
     void *entry() override;
     void stop();
   };
   std::vector<std::unique_ptr<MotrGC::GCWorker>> workers;
 
-  MotrGC() : cct(nullptr), store(nullptr) {}
+  MotrGC(CephContext *_cct, rgw::sal::Store* _store)
+    : cct(_cct), store(_store) {}
+
   ~MotrGC() {
     stop_processor();
     finalize();
   }
 
-  void initialize(CephContext *_cct, rgw::sal::Store* _store);
+  void initialize();
   void finalize();
 
   void start_processor();
   void stop_processor();
+
+  bool going_down();
+
+  // Set Up logging prefix for GC
+  CephContext *get_cct() const override { return cct; }
+  unsigned get_subsys() const;
+  std::ostream& gen_prefix(std::ostream& out) const;
 };
 
 #endif

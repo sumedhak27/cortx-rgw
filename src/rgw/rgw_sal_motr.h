@@ -1106,7 +1106,7 @@ class MotrStore : public Store {
 
     virtual int initialize(CephContext *cct, const DoutPrefixProvider *dpp);
     virtual void finalize(void) override;
-    int create_gc(const DoutPrefixProvider *dpp);
+    int create_gc();
     void stop_gc();
     MotrStore& set_run_gc_thread(bool _use_gc_thread);
     MotrStore& set_use_cache(bool _use_cache);

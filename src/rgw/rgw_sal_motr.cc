@@ -1483,7 +1483,7 @@ int MotrStore::initialize(CephContext *cct, const DoutPrefixProvider *dpp) {
   }
 
   if (use_gc_thread) {
-    int rc = create_gc(dpp);
+    int rc = create_gc();
     if (rc != 0)
       ldpp_dout(dpp, 0) << __func__ << ": Failed to Create MotrGC " <<
         "with rc = " << rc << dendl;
@@ -1491,9 +1491,10 @@ int MotrStore::initialize(CephContext *cct, const DoutPrefixProvider *dpp) {
   return rc;
 }
 
-int MotrStore::create_gc(const DoutPrefixProvider *dpp) {
+int MotrStore::create_gc() {
   int ret = 0;
-  motr_gc->initialize(cctx, this);
+  motr_gc = std::make_unique<MotrGC>(cctx, this);
+  motr_gc->initialize();
   motr_gc->start_processor();
   return ret;
 }

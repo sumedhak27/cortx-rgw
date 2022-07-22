@@ -16,33 +16,49 @@
 #include "gc.h"
 
 void *MotrGC::GCWorker::entry() {
-  // std::unique_lock<std::mutex> lk(lock);
-  // ldpp_dout(dpp, 10) << __func__ << ": Motr GC started" << dendl;
+  std::unique_lock<std::mutex> lk(lock);
+  ldpp_dout(dpp, 10) << __func__ << ": " << gc_thread_prefix
+    << worker_id << " started." << dendl;
   
-  // do {
-  //   ldpp_dout(dpp, 10) << __func__ << ": In a Motr GC loop." << dendl;
-  //   cv.wait_for(lk, std::chrono::milliseconds(gc_interval * 10));
-  // } while (! stop_signalled);
+  do {
 
-  // ldpp_dout(dpp, 0) << __func__ << ": Stop signalled called.#" 
-  //   << stop_signalled << dendl;
+    ldpp_dout(dpp, 10) << __func__ << ": " << gc_thread_prefix
+      << worker_id << " iteration" << dendl;
+    cv.wait_for(lk, std::chrono::milliseconds(gc_interval * 10));
+
+  } while (! motr_gc->going_down());
+
+  ldpp_dout(dpp, 0) << __func__ << ": Stop signalled called for "
+    << gc_thread_prefix << worker_id << dendl;
   return nullptr;
 }
 
-void MotrGC::initialize(CephContext *_cct, rgw::sal::Store* _store) {
-  cct = _cct;
-  store = _store;
+void MotrGC::initialize() {
+  ldpp_dout(this, 10) << __func__ << ": In initialize method." << dendl;
   // fetch num_max_queue from config
   // create all gc queues in motr index store
+}
+
+void MotrGC::finalize() {
+  // undo steps from initialize stage
 }
 
 void MotrGC::start_processor() {
   // fetch max_concurrent_io i.e. max_threads to create from config.
   // start all the gc_worker threads
+  auto max_workers = cct->_conf->rgw_gc_max_concurrent_io;
+  ldpp_dout(this, 10) << __func__ << ": max_workers = "
+    << max_workers << dendl;
+  workers.reserve(max_workers);
+  for (int ix = 0; ix < max_workers; ++ix) {
+    auto worker = std::make_unique<MotrGC::GCWorker>(this /* dpp */, 
+                                                     cct, this, ix);
+    worker->create((gc_thread_prefix + std::to_string(ix)).c_str());
+    workers.push_back(std::move(worker));
+  }
 }
 
 void MotrGC::stop_processor() {
-  // in case of stop signal,
   // gracefully shutdown all the gc threads.
   down_flag = true;
   for (auto& worker : workers) {
@@ -55,4 +71,16 @@ void MotrGC::stop_processor() {
 void MotrGC::GCWorker::stop() {
   std::lock_guard l{lock};
   cv.notify_all();
+}
+
+bool MotrGC::going_down() {
+  return down_flag;
+}
+
+unsigned MotrGC::get_subsys() const {
+  return dout_subsys;
+}
+
+std::ostream& MotrGC::gen_prefix(std::ostream& out) const {
+  return out << "garbage_collector: ";
 }
