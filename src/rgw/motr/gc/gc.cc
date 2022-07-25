@@ -19,7 +19,7 @@ void *MotrGC::GCWorker::entry() {
   std::unique_lock<std::mutex> lk(lock);
   ldpp_dout(dpp, 10) << __func__ << ": " << gc_thread_prefix
     << worker_id << " started." << dendl;
-  
+
   do {
 
     ldpp_dout(dpp, 10) << __func__ << ": " << gc_thread_prefix
@@ -34,24 +34,34 @@ void *MotrGC::GCWorker::entry() {
 }
 
 void MotrGC::initialize() {
-  ldpp_dout(this, 10) << __func__ << ": In initialize method." << dendl;
-  // fetch num_max_queue from config
-  // create all gc queues in motr index store
+  // fetch max gc indices from config
+  auto max_indices = std::min(cct->_conf->rgw_gc_max_objs,
+                              GC_MAX_SHARDS_PRIME);
+  ldpp_dout(this, 50) << __func__ << ": max_indices = " << max_indices << dendl;
+
+  index_names.reserve(max_indices);
+  for (int i = 0; i < max_indices; i++) {
+    // Append index name to the gc index list
+    index_names.push_back(gc_index_prefix + std::to_string(i));
+
+    // [To be Implemented] create index in motr dix
+  }
+
 }
 
 void MotrGC::finalize() {
-  // undo steps from initialize stage
+  // [To be Implemented] undo steps from initialize stage
 }
 
 void MotrGC::start_processor() {
   // fetch max_concurrent_io i.e. max_threads to create from config.
   // start all the gc_worker threads
   auto max_workers = cct->_conf->rgw_gc_max_concurrent_io;
-  ldpp_dout(this, 10) << __func__ << ": max_workers = "
+  ldpp_dout(this, 50) << __func__ << ": max_workers = "
     << max_workers << dendl;
   workers.reserve(max_workers);
   for (int ix = 0; ix < max_workers; ++ix) {
-    auto worker = std::make_unique<MotrGC::GCWorker>(this /* dpp */, 
+    auto worker = std::make_unique<MotrGC::GCWorker>(this /* dpp */,
                                                      cct, this, ix);
     worker->create((gc_thread_prefix + std::to_string(ix)).c_str());
     workers.push_back(std::move(worker));

@@ -22,6 +22,8 @@
 #include <condition_variable>
 #include <atomic>
 
+const int64_t GC_MAX_SHARDS_PRIME = 65521;
+static std::string gc_index_prefix = "gc.";
 static std::string gc_thread_prefix = "gc_thread_";
 
 class MotrGC : public DoutPrefixProvider {
