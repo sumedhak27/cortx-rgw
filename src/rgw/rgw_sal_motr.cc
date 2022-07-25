@@ -1472,17 +1472,16 @@ MotrStore& MotrStore::set_use_cache(bool _use_cache) {
 }
 
 int MotrStore::initialize(CephContext *cct, const DoutPrefixProvider *dpp) {
-  int rc = 0;
-  if (use_cache) {
-    int rc = init_metadata_cache(dpp, cct);
-    if (rc != 0) {
-      ldpp_dout(dpp, 0) << __func__ << ": Metadata cache init failed " <<
-        "with rc = " << rc << dendl;
-      return rc;
-    }
+  // Create metadata objects and set enabled=use_cache value
+  int rc = init_metadata_cache(dpp, cct);
+  if (rc != 0) {
+    ldpp_dout(dpp, 0) << __func__ << ": Metadata cache init failed " <<
+      "with rc = " << rc << dendl;
+    return rc;
   }
 
   if (use_gc_thread) {
+    // Create MotrGC object and start GCWorker threads
     int rc = create_gc();
     if (rc != 0)
       ldpp_dout(dpp, 0) << __func__ << ": Failed to Create MotrGC " <<

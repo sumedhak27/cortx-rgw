@@ -13,7 +13,7 @@
  *
  */
 
-#include "gc.h"
+#include "motr/gc/gc.h"
 
 void *MotrGC::GCWorker::entry() {
   std::unique_lock<std::mutex> lk(lock);
