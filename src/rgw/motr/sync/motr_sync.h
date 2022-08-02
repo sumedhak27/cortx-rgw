@@ -29,23 +29,23 @@ class MotrLockProvider;
 
 struct motr_locker_info_t
 {
-  std::string coockie;        // unique id of caller
+  std::string cookie;        // unique id of caller
   utime_t expiration;         // expiration: non-zero means epoch of locker expiration
   std::string description;    // description: locker description, may be empty
 
   motr_locker_info_t() {}
   motr_locker_info_t(const utime_t& _e, std::string& _c, const std::string& _d)
-                    : expiration(_e), coockie(_c), description(_d) {}
+                    : expiration(_e), cookie(_c), description(_d) {}
   void encode(ceph::buffer::list &bl) const {
     ENCODE_START(1, 1, bl);
-    encode(coockie, bl);
+    encode(cookie, bl);
     encode(expiration, bl);
     encode(description, bl);
     ENCODE_FINISH(bl);
   }
   void decode(ceph::buffer::list::const_iterator &bl) {
     DECODE_START_LEGACY_COMPAT_LEN(1, 1, 1, bl);
-    decode(coockie, bl);
+    decode(cookie, bl);
     decode(expiration, bl);
     decode(description, bl);
     DECODE_FINISH(bl);

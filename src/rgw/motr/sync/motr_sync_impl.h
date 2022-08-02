@@ -18,48 +18,48 @@
 
 /*
 Usage:
-  To use locking implemented in this file, the caller needs to instantiate
-class "MotrKVLockProvider" to create object. On such object, caller needs
-to call "initialize()" function, which in turn creates a global lock index,
-using the name specified by the caller. The caller can do this during the
-process/thread start-up/initialization; if "initialize()" returns < 0, the
-caller is expected to stop further initialization, if locking is esential
-in the system. In multi-process environment, each process can call
-"MotrKVLockProvider::initialize" during it's start-up, providing the same
-name for the global lock index.
+ Approach 1.
+  1. Instantiate one of the LockProvider Implementation.
+      example:
+      std::unique_ptr<MotrKvLockProvider> lock_provider;
 
-After "MotrKVLockProvider" instance is created and initialized successfully,
-when the caller wants to acquire a resource, caller can first instantiate
-"MotrLock" class, passing it the instance of class "MotrKVLockProvider" in
-MotrLock::initialize() method. The caller can call MotrLock::lock() to lock
-the resource. Once the caller is done with the resource, caller can 
-call "MotrLock::unlock()". Any -ve value returned by MotrLock::lock()
-indicates resource can't be locked; a value 0 indicates success.
+  2. Initialize the lock provider with global lock index table
+      example:
+      lock_provider.initialize(pp, store, "motr.gc.index.locks");
 
-Approach 1.
-Steps for caller(developer):
-1. During startup, create instance of class MotrKVLockProvider. Call
-initialize() on the instance, passing it a globally unique name for the
-global lock index creation. If initialize() fails (i.e. returns < 0),
-caller may proceed further or exit the application/system.
+      The caller can do this during the process/thread 
+      start-up/initialization; if "initialize()" returns < 0, the
+      caller is expected to stop further initialization if locking is esential
+      in the system. In multi-process environment, each process can call
+      "MotrKVLockProvider::initialize" during it's start-up, providing the same
+      name for the global lock index.
 
-2. Once step (1) is successful, create a global instance of class MotrLock,
-call MotrLock::initialize() and pass it KV lock provider instance
-created in step (1).
+  3. Instantiate one of the Locker Implmentations.
+      example:
+      std::unique_ptr<MotrLock> motr_lock;
+  
+  4. Initialize the Locker class with LockProvider Object.
+      example:
+      motr_lock.initialize(lock_provider);
+  
+  5. Lock the required resource using Locker object
+      example:
+      motr_lock.lock(resource_name, lock_type,
+                     lock_duration, locker_id);
 
-3. Just before acquiring a resource, call MotrLock::lock() on the global
-instance of MotrLock.
+      Any -ve value returned by MotrLock::lock() indicates resource 
+      can't be locked; a value 0 indicates success.
 
-4. After work with the resource is done, release the lock by calling MotrLock::
-unlock() on the global instance of MotrLock.
-
-Approach 2.
-Steps:
-1. Follow step (1) in Approach 1.
-2. Call create_motr_Lock_instance(), passing it lock provider instance created
-in step (1) above.
-3. Call get_lock_instance() wherever lock is needed.
-
+  6. Unlock the resource using the same Locker Object.
+      exmaple:
+      motr_lock.unlock(resource_name, lock_type, locker_id);
+  
+ Approach 2.
+  1. Follow step (1) & step (2) in Approach 1.
+  2. Call create_motr_Lock_instance(), passing it lock provider instance created
+     in step (1) above.
+  3. Call get_lock_instance() wherever lock is needed.
+    
 Note: Presently, locking framework supports EXCLUSIVE lock; it means
 caller needs to set MotrLockType::EXCLUSIVE while calling  MotrLock::lock(),
 and do not pass locker_id.

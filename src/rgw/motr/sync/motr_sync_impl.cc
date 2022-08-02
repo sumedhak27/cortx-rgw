@@ -19,22 +19,20 @@ void MotrLock::initialize(std::shared_ptr<MotrLockProvider> lock_provider) {
   _lock_provider = lock_provider;
 }
 
-int MotrLock::lock(const std::string& lock_name, MotrLockType lock_type,
-                   utime_t lock_duration, const std::string& locker_id) {
-  if (!_lock_provider ||
-      ((MotrLockType::EXCLUSIVE == lock_type) && locker_id.empty())) {
+int MotrLock::lock(const std::string& lock_name, 
+                   MotrLockType lock_type,
+                   utime_t lock_duration,
+                   const std::string& locker_id = "") {
+  if (!_lock_provider || (MotrLockType::EXCLUSIVE != lock_type && 
+                          locker_id.empty())) {
     return -EINVAL;
   }
   int rc = 0;
   motr_lock_info_t lock_obj;
   rc = _lock_provider->read_lock(lock_name, &lock_obj);
-  if (rc == -ENOENT) {
-    // lock is available/free
-  } else {
-    if (MotrLockType::EXCLUSIVE == lock_type) {
-      // caller needs exclusive lock...but lock entry is present
-      return -EBUSY;
-    }
+  if (rc != 0 && rc != -ENOENT)
+    return rc;
+  if (rc == 0) {
     // lock entry is present. Check if this is a stale/expired lock
     utime_t now = ceph_clock_now();
     auto iter = lock_obj.lockers.begin();
@@ -47,28 +45,30 @@ int MotrLock::lock(const std::string& lock_name, MotrLockType lock_type,
         ++iter;
       }
     }
-    if (!lock_obj.lockers.empty()) {
-      // lock is not available
-      return -EBUSY;
-    } else {
-      // Try to acquire lock object
-      struct motr_locker_info_t locker;
-      locker.coockie = locker_id;
-      locker.expiration = ceph_clock_now() + lock_duration;
-      locker.description = "";
-      // Update lock entry with current locker and lock the resource
-      lock_obj.lockers.insert(
-          std::pair<std::string, struct motr_locker_info_t>(locker_id,locker));
-      rc = _lock_provider->write_lock(lock_name, &lock_obj, false);
-      if (rc < 0) {
-        // Failed to acquire lock object; possibly, already acquired
-        return -EBUSY;
-      }
-      return rc;
-    }
+    // remove the lock if no locker is left
+    if (lock_obj.lockers.empty())
+      _lock_provider->remove_lock(lock_name, locker_id);
   }
 
-  return 0;
+  if (!lock_obj.lockers.empty() && MotrLockType::EXCLUSIVE == lock_type) {
+    // lock is not available
+    return -EBUSY;
+  } else {
+    // Try to acquire lock object
+    struct motr_locker_info_t locker;
+    locker.cookie = locker_id;
+    locker.expiration = ceph_clock_now() + lock_duration;
+    locker.description = "";
+    // Update lock entry with current locker and lock the resource
+    lock_obj.lockers.insert(
+        std::pair<std::string, struct motr_locker_info_t>(locker_id, locker));
+    rc = _lock_provider->write_lock(lock_name, &lock_obj, false);
+    if (rc < 0) {
+      // Failed to acquire lock object; possibly, already acquired
+      return -EBUSY;
+    }
+  }
+  return rc;
 }
 
 int MotrLock::unlock(const std::string& lock_name,
@@ -117,7 +117,7 @@ int MotrKVLockProvider::write_lock(const std::string& lock_name,
 }
 
 int MotrKVLockProvider::remove_lock(const std::string& lock_name,
-                                    const std::string& locker_id) {
+                                    const std::string& locker_id = "") {
   if (!_store || _lock_index.empty() || lock_name.empty()) {
     return -EINVAL;
   }
@@ -127,7 +127,7 @@ int MotrKVLockProvider::remove_lock(const std::string& lock_name,
   bool del_lock_entry = false;
   rc = read_lock(lock_name, &lock_info);
   if (rc != 0)
-    return rc;
+    return (rc == -ENOENT) ? 0 : rc;
 
   if (locker_id.empty()) {
     // this is exclusive lock
@@ -144,6 +144,10 @@ int MotrKVLockProvider::remove_lock(const std::string& lock_name,
   if (del_lock_entry) {
     // all lockers removed; now delete lock object
     rc = _store->do_idx_op_by_name(_lock_index, M0_IC_DEL, lock_name, bl);
+  } else {
+    // update the lock entry
+    lock_info.encode(bl);
+    rc = _store->do_idx_op_by_name(_lock_index, M0_IC_PUT, lock_name, bl);
   }
   return rc;
 }
