@@ -216,6 +216,43 @@ int MotrGC::get_locked_gc_index(uint32_t& rand_ind) {
   return rc;
 }
 
+int MotrGC::list(std::vector<motr_gc_obj_info>& gc_entries) {
+  int rc = 0;
+  int max_entries = 1000;
+  for (uint32_t i = 0; i < max_indices; i++) {
+    std::vector<std::string> keys(max_entries + 1);
+    std::vector<bufferlist> vals(max_entries + 1);
+    std::string marker = "";
+    bool truncated = false;
+    ldout(cct, 70) << "listing entries for " << index_names[i] << dendl;
+    do {
+      if (!marker.empty())
+        keys[0] = marker;
+      rc = store->next_query_by_name(index_names[i], keys, vals,
+                                     obj_tag_prefix);
+      if (rc < 0) {
+        ldpp_dout(this, 0) <<__func__<<": ERROR: NEXT query failed. rc="
+          << rc << dendl;
+        return rc;
+      }
+      if (rc == max_entries + 1) {
+        truncated = true;
+        marker = keys.back();
+      }
+      for (int j = 0; j < max_entries && !keys[j].empty(); j++) {
+        bufferlist::const_iterator blitr = vals[j].cbegin();
+        motr_gc_obj_info gc_obj;
+        gc_obj.decode(blitr);
+        gc_entries.push_back(gc_obj);
+        ldout(cct, 70) << gc_obj.tag << ", " 
+                       << gc_obj.name << ", "
+                       << gc_obj.size << ", " << dendl;
+      }
+    } while (truncated);
+  }
+  return 0;
+}
+
 unsigned MotrGC::get_subsys() const {
   return dout_subsys;
 }
