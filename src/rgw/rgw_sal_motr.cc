@@ -2215,7 +2215,32 @@ int MotrObject::remove_mobj_and_index_entry(
   if (ent.meta.size != 0) {
     if (ent.meta.category == RGWObjCategory::MultiMeta) {
       this->set_category(RGWObjCategory::MultiMeta);
-      rc = this->delete_part_objs(dpp, &size_rounded);
+      if (store->gc_enabled()) {
+        ldpp_dout(dpp, 0) <<__func__<< ": trying to put obj into GC=" << dendl;
+        std::string upload_id = "";
+        rc = store->get_upload_id(bucket_name, delete_key, upload_id);
+        if (rc < 0) {
+          ldpp_dout(dpp, 0) <<__func__<< ": ERROR: get_upload_id failed. rc=" << rc << dendl;
+        }
+        else {
+          std::string obj_fqdn = bucket_name + "/" + delete_key;
+          std::string obj_part_iname = "motr.rgw.object." + bucket_name + "." + delete_key +
+                          "." + upload_id + ".parts";
+          ldpp_dout(dpp, 20) << __func__ << ": object part index=" << obj_part_iname << dendl;
+          ::Meta *mobj = reinterpret_cast<::Meta*>(&this->meta);
+          motr_gc_obj_info gc_obj(upload_id, obj_fqdn, *mobj, std::time(nullptr),
+                                ent.meta.size, size_rounded, true, obj_part_iname);
+          rc = store->get_gc()->enqueue(gc_obj);
+          if (rc == 0) {
+            pushed_to_gc = true;
+            ldpp_dout(dpp, 20) << __func__ << ": Pushed the delete req with tag="
+              << upload_id << " to the motr garbage collector." << dendl;
+          }
+        }
+      }
+      if (!pushed_to_gc) {
+        rc = this->delete_part_objs(dpp, &size_rounded);
+      }
     } else {
       // Handling Simple Object Deletion
       // Open the object if not already open.

@@ -172,7 +172,9 @@ class MotrGC : public DoutPrefixProvider {
   int dequeue(std::string iname, motr_gc_obj_info obj);
 
   int list(std::vector<std::unordered_map<std::string, std::string>> &gc_entries);
-  int delete_motr_obj_from_gc(motr_gc_obj_info ginfo);
+  int delete_obj_from_gc(motr_gc_obj_info ginfo);
+  int process_parts(motr_gc_obj_info ginfo, std::time_t end_time);
+  int delete_motr_obj(Meta motr_obj);
   int get_locked_gc_index(uint32_t& rand_ind, uint32_t& lease_duration);
   int un_lock_gc_index(uint32_t& index);
 
