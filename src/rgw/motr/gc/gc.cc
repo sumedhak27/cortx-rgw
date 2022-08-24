@@ -396,7 +396,6 @@ int MotrGC::un_lock_gc_index(uint32_t& index) {
 }
 
 int MotrGC::list(std::vector<std::unordered_map<std::string, std::string>> &gc_entries) {
-  int rc = 0;
   int max_entries = 1000;
   max_indices = get_max_indices();
   for (uint32_t i = 0; i < max_indices; i++) {
@@ -411,7 +410,7 @@ int MotrGC::list(std::vector<std::unordered_map<std::string, std::string>> &gc_e
       if (!marker.empty()) {
         keys[0] = marker;
       }
-      rc = store->next_query_by_name(iname, keys, vals, obj_tag_prefix);
+      int rc = store->next_query_by_name(iname, keys, vals, obj_tag_prefix);
       if (rc < 0) {
         ldout(cct, 0) <<__func__<<": ERROR: NEXT query failed. rc="
           << rc << dendl;

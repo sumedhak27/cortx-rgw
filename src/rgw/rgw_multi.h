@@ -35,7 +35,9 @@ struct RGWUploadPartInfo {
     ENCODE_START(4, 2, bl);
     encode(num, bl);
     encode(size, bl);
-    encode(size_rounded, bl);
+    #ifdef WITH_RADOSGW_MOTR
+      encode(size_rounded, bl);
+    #endif
     encode(etag, bl);
     encode(modified, bl);
     encode(manifest, bl);
@@ -47,7 +49,9 @@ struct RGWUploadPartInfo {
     DECODE_START_LEGACY_COMPAT_LEN(4, 2, 2, bl);
     decode(num, bl);
     decode(size, bl);
-    decode(size_rounded, bl);
+    #ifdef WITH_RADOSGW_MOTR
+      decode(size_rounded, bl);
+    #endif
     decode(etag, bl);
     decode(modified, bl);
     if (struct_v >= 3)

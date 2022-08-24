@@ -199,12 +199,14 @@ struct rgw_bucket_dir_entry_meta {
   std::string owner_display_name;
   std::string content_type;
   uint64_t accounted_size;
+  uint64_t size_rounded;
   std::string user_data;
   std::string storage_class;
   bool appendable;
 
   rgw_bucket_dir_entry_meta() :
-    category(RGWObjCategory::None), size(0), accounted_size(0), appendable(false) { }
+    category(RGWObjCategory::None), size(0), accounted_size(0),
+    size_rounded(0), appendable(false) { }
 
   void encode(ceph::buffer::list &bl) const {
     ENCODE_START(7, 3, bl);
@@ -216,6 +218,9 @@ struct rgw_bucket_dir_entry_meta {
     encode(owner_display_name, bl);
     encode(content_type, bl);
     encode(accounted_size, bl);
+    #ifdef WITH_RADOSGW_MOTR
+      encode(size_rounded, bl);
+    #endif
     encode(user_data, bl);
     encode(storage_class, bl);
     encode(appendable, bl);
@@ -236,6 +241,9 @@ struct rgw_bucket_dir_entry_meta {
       decode(accounted_size, bl);
     else
       accounted_size = size;
+    #ifdef WITH_RADOSGW_MOTR
+      decode(size_rounded, bl);
+    #endif
     if (struct_v >= 5)
       decode(user_data, bl);
     if (struct_v >= 6)

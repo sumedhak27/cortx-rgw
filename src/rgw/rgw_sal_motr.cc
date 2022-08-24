@@ -2208,14 +2208,13 @@ int MotrObject::remove_mobj_and_index_entry(
     std::string bucket_name) {
   int rc;
   bufferlist bl;
-  uint64_t size_rounded = 0;
   bool pushed_to_gc = false;
 
   // handling empty size object case
   if (ent.meta.size != 0) {
     if (ent.meta.category == RGWObjCategory::MultiMeta) {
       this->set_category(RGWObjCategory::MultiMeta);
-      rc = this->delete_part_objs(dpp, &size_rounded);
+      rc = this->delete_part_objs(dpp);
     } else {
       // Handling Simple Object Deletion
       // Open the object if not already open.
@@ -2228,14 +2227,13 @@ int MotrObject::remove_mobj_and_index_entry(
           return rc;
         }
       }
-      size_rounded = roundup(ent.meta.size, get_unit_sz());
       if (store->gc_enabled()) {
         std::string tag = PRIx64 + std::to_string(this->meta.oid.u_hi) + ":" +
                           PRIx64 + std::to_string(this->meta.oid.u_lo);
         std::string obj_fqdn = bucket_name + "/" + delete_key;
         ::Meta *mobj = reinterpret_cast<::Meta*>(&this->meta);
         motr_gc_obj_info gc_obj(tag, obj_fqdn, *mobj, std::time(nullptr),
-                                ent.meta.size, size_rounded, false, "");
+                                ent.meta.size, ent.meta.size_rounded, false, "");
         rc = store->get_gc()->enqueue(gc_obj);
         if (rc == 0) {
           pushed_to_gc = true;
@@ -2263,7 +2261,7 @@ int MotrObject::remove_mobj_and_index_entry(
   if (ent.is_delete_marker())
     return rc;
   rc = update_bucket_stats(dpp, this->store, ent.meta.owner, bucket_name,
-                           ent.meta.size, size_rounded, 1, false);
+                           ent.meta.size, ent.meta.size_rounded, 1, false);
   if (rc != 0) {
     ldpp_dout(dpp, 20) <<__func__<< ": Failed stats substraction for the "
       << "bucket/obj=" << bucket_name << "/" << delete_key
@@ -3417,13 +3415,12 @@ int MotrObject::open_part_objs(const DoutPrefixProvider* dpp,
   return 0;
 }
 
-int MotrObject::delete_part_objs(const DoutPrefixProvider* dpp,
-                                 uint64_t* size_rounded) {
+int MotrObject::delete_part_objs(const DoutPrefixProvider* dpp) {
   string version_id = this->get_instance();
   std::unique_ptr<rgw::sal::MultipartUpload> upload;
   upload = this->get_bucket()->get_multipart_upload(this->get_name(), string());
   std::unique_ptr<rgw::sal::MotrMultipartUpload> mupload(static_cast<rgw::sal::MotrMultipartUpload *>(upload.release()));
-  return mupload->delete_parts(dpp, version_id, size_rounded);
+  return mupload->delete_parts(dpp, version_id);
 }
 
 int MotrObject::read_multipart_obj(const DoutPrefixProvider* dpp,
@@ -3748,14 +3745,14 @@ int MotrAtomicWriter::complete(size_t accounted_size, const std::string& etag,
   obj.get_key().get_index_key(&ent.key);
   ent.meta.size = total_data_size;
   ent.meta.accounted_size = total_data_size;
+  // Do not calculate rounded size for 0 byte Objects
+  // as the layout_id will not be available for such objects.
+  if (ent.meta.size != 0)
+    ent.meta.size_rounded = roundup(ent.meta.size, obj.get_unit_sz());
   ent.meta.mtime = real_clock::is_zero(set_mtime)? ceph::real_clock::now() : set_mtime;
   ent.meta.etag = etag;
   ent.meta.owner = owner.to_str();
   ent.meta.owner_display_name = obj.get_bucket()->get_owner()->get_display_name();
-  uint64_t size_rounded = 0;
-  // For 0kb Object layout_id will not be available.
-  if (ent.meta.size != 0)
-    size_rounded = roundup(ent.meta.size, obj.get_unit_sz());
 
   RGWBucketInfo &info = obj.get_bucket()->get_info();
 
@@ -3834,7 +3831,7 @@ int MotrAtomicWriter::complete(size_t accounted_size, const std::string& etag,
 
   // Add object size and count in bucket stats entry.
   rc = update_bucket_stats(dpp, store, owner.to_str(), tenant_bkt_name,
-                           total_data_size, size_rounded);
+                           total_data_size, ent.meta.size_rounded);
   if (rc != 0) {
     ldpp_dout(dpp, 20) <<__func__<< ": Failed stats additon for the bucket/obj = "
       << tenant_bkt_name << "/" << obj.get_name() << ", rc=" << rc << dendl;
@@ -3848,8 +3845,8 @@ int MotrAtomicWriter::complete(size_t accounted_size, const std::string& etag,
   return rc;
 }
 
-int MotrMultipartUpload::delete_parts(const DoutPrefixProvider *dpp, std::string version_id, uint64_t* size_rounded)
-{
+int MotrMultipartUpload::delete_parts(const DoutPrefixProvider *dpp,
+                                      std::string version_id) {
   int rc;
   int max_parts = 1000;
   uint64_t total_size = 0, total_size_rounded = 0;
@@ -3909,8 +3906,6 @@ int MotrMultipartUpload::delete_parts(const DoutPrefixProvider *dpp, std::string
       return rc;
     }
   }
-  if (size_rounded != nullptr)
-    *size_rounded = total_size_rounded;
 
   if (get_upload_id().length()) {
     // Subtract size & object count if multipart is not completed.
@@ -4211,6 +4206,7 @@ int MotrMultipartUpload::complete(const DoutPrefixProvider *dpp,
   int handled_parts = 0;
   int max_parts = 1000;
   int marker = 0;
+  uint64_t size_rounded = 0;
   uint64_t min_part_size = cct->_conf->rgw_multipart_min_part_size;
   auto etags_iter = part_etags.begin();
   rgw::sal::Attrs &attrs = target_obj->get_attrs();
@@ -4301,6 +4297,7 @@ int MotrMultipartUpload::complete(const DoutPrefixProvider *dpp,
 
       off += part_size;
       accounted_size += part->accounted_size;
+      size_rounded += part->size_rounded;
       ldpp_dout(dpp, 20) <<__func__<< ": off=" << off << ", accounted_size=" << accounted_size << dendl;
     }
   } while (truncated);
@@ -4354,6 +4351,7 @@ int MotrMultipartUpload::complete(const DoutPrefixProvider *dpp,
   target_obj->get_key().get_index_key(&ent.key);  // Change to offical name :)
   ent.meta.size = off;
   ent.meta.accounted_size = accounted_size;
+  ent.meta.size_rounded = size_rounded;
   ldpp_dout(dpp, 20) <<__func__<< ": obj size=" << ent.meta.size
                            << " obj accounted size=" << ent.meta.accounted_size << dendl;
   ent.meta.mtime = ceph::real_clock::now();
