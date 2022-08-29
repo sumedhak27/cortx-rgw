@@ -248,14 +248,9 @@ int MotrGC::process_parts(motr_gc_obj_info ginfo, std::time_t end_time) {
   int max_entries = 10000;
   int number_of_parts = 0;
   int processed_parts = 0;
-  std::vector<std::string> keys(max_entries + 1);
-  std::vector<bufferlist> vals(max_entries + 1);
+  std::vector<std::string> keys(max_entries);
+  std::vector<bufferlist> vals(max_entries);
 
-  keys[0].clear();
-  keys[0] = "part.";
-  char buf[32];
-  snprintf(buf, sizeof(buf), "%08d", 1);
-  keys[0].append(buf);
   rc = store->next_query_by_name(ginfo.multipart_iname, keys, vals);
   if (rc < 0) {
     ldout(cct, 0) <<__func__<<": ERROR: next query failed. rc="
@@ -266,18 +261,26 @@ int MotrGC::process_parts(motr_gc_obj_info ginfo, std::time_t end_time) {
   for (const auto& bl: vals) {
     if (bl.length() == 0)
       break;
+
     RGWUploadPartInfo info;
     auto iter = bl.cbegin();
     info.decode(iter);
+    rgw::sal::Attrs attrs_dummy;
+    decode(attrs_dummy, iter);
     Meta mobj;
     mobj.decode(iter);
     ldout(cct, 20) <<__func__<< ": part_num=" << info.num
-                            << " part_size=" << info.size << dendl;
+                             << " part_size=" << info.size << dendl;
     std::string tag = PRIx64 + std::to_string(mobj.oid.u_hi) + ":" +
-                        PRIx64 + std::to_string(mobj.oid.u_lo);
-    std::string obj_fqdn = ginfo.name + ".part" + std::to_string(info.num);
+                      PRIx64 + std::to_string(mobj.oid.u_lo);
+    std::string part_name = "part.";
+    char buff[32];
+    snprintf(buff, sizeof(buff), "%08d", (int)info.num);
+    part_name.append(buff);
+
+    std::string obj_fqdn = ginfo.name + "." + part_name;
     motr_gc_obj_info gc_obj(tag, obj_fqdn, mobj, ginfo.deletion_time,
-                              info.size, info.size_rounded, false, "");
+                            info.size, info.size_rounded, false, "");
     rc = enqueue(gc_obj);
     if (rc < 0) {
       ldout(cct, 0) <<__func__<< ": ERROR: failed to push " 
@@ -285,14 +288,11 @@ int MotrGC::process_parts(motr_gc_obj_info ginfo, std::time_t end_time) {
       continue;
     }
     processed_parts++;
-    std::string p = "part.";
-    char buff[32];
-    snprintf(buff, sizeof(buff), "%08d", (int)info.num);
-    p.append(buff);
     bufferlist bl_del;
-    rc = store->do_idx_op_by_name(ginfo.multipart_iname, M0_IC_DEL, p, bl_del);
+    rc = store->do_idx_op_by_name(ginfo.multipart_iname,
+                                  M0_IC_DEL, part_name, bl_del);
     if (rc < 0) {
-      ldout(cct, 0) <<__func__<< ": ERROR: failed to remove part " << p 
+      ldout(cct, 0) <<__func__<< ": ERROR: failed to remove part " << part_name 
                       << " from part index " << ginfo.multipart_iname << dendl;
     }
     if (std::time(nullptr) > end_time) {
@@ -384,10 +384,11 @@ int MotrGC::delete_motr_obj(Meta motr_obj) {
 int MotrGC::enqueue(motr_gc_obj_info obj) {
   int rc = 0;
   // create 🔑's:
-  //  - 1_{obj.deletion_time + min_wait_time}
+  //  - 1_{obj.deletion_time}_{obj.tag}
   //  - 0_{obj.tag}
   std::string key1 = obj_exp_time_prefix +
-                     std::to_string(obj.deletion_time + cct->_conf->rgw_gc_obj_min_wait);
+                     std::to_string(obj.deletion_time) + "_" +
+                     obj.tag;
   std::string key2 = obj_tag_prefix + obj.tag;
 
   bufferlist bl;
@@ -420,7 +421,8 @@ int MotrGC::dequeue(std::string iname, motr_gc_obj_info obj) {
   bufferlist bl;
   std::string tag_key = obj_tag_prefix + obj.tag;
   std::string expiry_time_key = obj_exp_time_prefix +
-                     std::to_string(obj.deletion_time + cct->_conf->rgw_gc_obj_min_wait);
+                                std::to_string(obj.deletion_time) +
+                                "_" + obj.tag;
   rc = store->do_idx_op_by_name(iname, M0_IC_DEL, tag_key, bl);
   if (rc < 0) {
     ldout(cct, 0) << __func__ << ": ERROR: failed to delete tag entry "
@@ -481,7 +483,6 @@ int MotrGC::un_lock_gc_index(uint32_t& index) {
 }
 
 int MotrGC::list(std::vector<std::unordered_map<std::string, std::string>> &gc_entries) {
-  int rc = 0;
   int max_entries = 1000;
   max_indices = get_max_indices();
   for (uint32_t i = 0; i < max_indices; i++) {
@@ -496,7 +497,7 @@ int MotrGC::list(std::vector<std::unordered_map<std::string, std::string>> &gc_e
       if (!marker.empty()) {
         keys[0] = marker;
       }
-      rc = store->next_query_by_name(iname, keys, vals, obj_tag_prefix);
+      int rc = store->next_query_by_name(iname, keys, vals, obj_tag_prefix);
       if (rc < 0) {
         ldout(cct, 0) << __func__ << ": ERROR: next query failed for " << iname
                       << " with rc=" << rc << dendl;
