@@ -127,13 +127,6 @@ static std::string motr_global_indices[] = {
 #define TS_LEN 8
 #define UUID_LEN 23
 
-// log level mapping for RGW SAL
-#define LOG_CRITICAL 0
-#define LOG_ERROR 0
-#define LOG_WARNING 5
-#define LOG_INFO 10
-#define LOG_DEBUG 20
-
 static uint64_t roundup(uint64_t x, uint64_t by)
 {
   if (x == 0)
