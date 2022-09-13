@@ -2071,7 +2071,17 @@ MotrObject::MotrDeleteOp::MotrDeleteOp(MotrObject *_source, RGWObjectCtx *_rctx)
   source(_source),
   rctx(_rctx)
 {
-  addb_logger.set_id(rctx);
+  // - In case of the operation remove_user with --purge-data, we don't 
+  //   have access to the `req_state* s` via `RGWObjectCtx* rctx`.
+  // - In this case, we are generating a new req_id per obj deletion operation.
+  //   This will retrict us from traking all delete req per user_remove req in ADDB
+  //   untill we make changes to access req_state without using RGWObjectCtx ptr.
+
+  if (rctx->get_private()) {
+    addb_logger.set_id(rctx);
+  } else {
+    addb_logger.set_id(_source->store->get_new_req_id());
+  }
 }
 
 // Implementation of DELETE OBJ also requires MotrObject::get_obj_state()
